@@ -1,0 +1,150 @@
+---
+title: "Prull_Master_Analysis"
+author: "Marcus Prull"
+date: "12/10/2024"
+output: html_document
+---
+
+
+Loading in required packages for analysis
+```{r setup, include=FALSE}
+
+require(lubridate)#For making date column
+require(cowplot)#For any plot griding 
+require(dplyr)#Filtering data
+require(ggplot2)#Making final plots
+require(geosphere)#package for straight line distance calculations
+```
+
+First I will start with analysis of our control individuals. Below we will calculate movement rates for both species as well as home range sizes. Additionally, we will look how movement rates differ throughout the year for each species. As well as compare straight line and in lake distance calculations (many studies in past have used straight line distance to represent movement)
+
+Loading in raw control fish location data from github
+```{r}
+
+Control = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/Data/ControlMovementFinal.csv")#had to change /blob/ to /raw/
+Control
+
+```
+
+Here I filter the movement spreadsheet to fish that have >2 locations. The first row of data for each fish is its tagging location, therefore, we need 2 subsequent locations AFTER their tagging location to calculate a meaningful movement value. 
+```{r}
+
+Control = Control %>% group_by(RewardTag1) %>% filter (n()>2)#grouping chunks of data by their reward tag number and then filtering to only those groups that have 3+ observations
+
+```
+
+Here I make a singular date column for the dataset by using the year, month, and day columns from the raw csv
+```{r}
+
+Date = make_date(year = Control$Year, month = Control$Month, day = Control$Day)
+Control = cbind(Date,Control)#binding the vector to the main csv
+colnames(Control)[1]<-"Date"#Naming the date column "Date"
+Control
+
+```
+Here I setup vectors to be used by the loop to ensure that it loops over each tag number independently of one another. Additionally, I setup the empty containers for the results of the loops to go into. One container is the raw distance values between successive locations and the second container is the days elapsed between successive observed locations. 
+```{r}
+
+tag_nums = unique(Control$RewardTag1)
+n_fish = length(tag_nums)#90 individual fish making up our control dataset
+
+control_SL = numeric()
+control_SL_days = numeric()
+
+```
+
+First we will setup the loop to calculate STRAIGHT LINE DISTANCE between successive locations for my control individuals. 
+
+```{r}
+#Outside loop that selects tag-number 
+for(i in 1:n_fish){
+  
+  new_tag = tag_nums[i]
+  new_dat = subset(Control,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  ControlDist = numeric(tmax)
+  days = numeric(tmax)
+  
+  for(t in 2:tmax){
+    
+    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[t-1],new_dat$Lat[t-1]))#
+    ControlDist[t] = dist_m
+    days[t] = as.numeric(new_dat$Date[t]-new_dat$Date[t-1])
+  }
+  control_SL = append(control_SL,ControlDist)
+  control_SL_days = append(control_SL_days,days)
+}
+control_SL
+control_SL_days
+
+```
+
+Here we just combine the output from the loop to the original dataset. 
+```{r}
+Control = cbind(control_SL, Control)
+colnames(Control)[1]<-"SL_M"#straight line_meters
+
+Control = cbind(control_SL_days,Control)
+colnames(Control)[1]<-"DaysElapsed"
+
+Control
+```
+Now, because the first location is the original tagging location, the distance from the first to second record is essentially negligible. We didn't start tracking till almost 3 ish months after tagging. Therefore, the days elapsed and distance values from the first two rows for EACH fish is essentially negligible. Here I filter the data down to reflect that. 
+
+Additionally, I add the movement rates (meters per day) as a new column to the data
+
+```{r}
+
+Control = Control %>% group_by(RewardTag1) %>% slice(3:n())
+
+Control$SL_M_D = Control$SL_M/Control$DaysElapsed
+
+Control
+```
+
+Now we need to make sure that we have data for only alive fish. The GroupMovement column is indicative of this. We need to make sure that the group movement values are all "A" so dead fish movement is not included. Every fish was considered to be "D" or "dead" for each subsequent location after its first "D" code. 
+```{r}
+
+Control = Control[Control$GroupMovement=="A",]
+
+```
+In total, we are left with 686 step lengths for fish that were not displaced by tournaments and were used for natural movement analysis
+
+Here is a boxplot for looking at how the monthly movement rates differed between species. 
+```{r}
+
+#Boxplot comparing species movement over months. 
+ggplot(Control,aes(as.factor(Month),SL_M_D))+
+      geom_boxplot(aes(fill=Species))+
+      coord_cartesian(ylim=c(0,1600))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Month",y="Movement Speed (meters/week)")
+
+```
+Obviously this is hard to look at as there are many outliers across most of the months. Here I shrink down the plot and remove outliers to get a better look at what is going on with our movement across months.
+
+```{r}
+ggplot(Control,aes(as.factor(Month),SL_M_D))+
+      geom_boxplot(aes(fill=Species),outlier.color=NA)+
+      coord_cartesian(ylim=c(0,250))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Month",y="Movement Speed (meters/week)")
+
+```
+NEED TO PARSE OUT AND SEPARATE 2023 fish movement from 2024 fish movment (STARTED IN 4/23, ended in 4/24). For example, the 4 or april bar here is inclusive of data from both 2023 and 2024 because there is overlap. 
+
+
+Making a dataframe of temperatures for temperature data to add to a graph. Mean temperature for each month was obtained from the NWS website specifically looking at their air temp climatoloical data for Gadsden AL. 
+```{r}
+Temperature = data.frame(Month = c(4,5,6,7,8,9,10,11,12,1,2,3,4), Year = c(2023,2023,2023,2023,2023,2023,2023,2023,2023,2024,2024,2024,2024),Mean_Temp_F = c(61.7,69.8,76.7,81.3,80.7,75.2,65.1,55.0,46.6,39.5,51.8,56.9,63.4))
+
+Temperature$Mean_Temp_C = (Temperature$Mean_Temp_F-32)*(5/9)#Farenheit to Celsius conversion
+
+Temperature
+```
+
+ALSO, NEED TO CALCULATE IN LAKE DISTANCE FOR CONTROL FISH. 
+
+
