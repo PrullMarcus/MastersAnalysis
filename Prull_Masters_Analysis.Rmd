@@ -14,6 +14,10 @@ require(cowplot)#For any plot griding
 require(dplyr)#Filtering data
 require(ggplot2)#Making final plots
 require(geosphere)#package for straight line distance calculations
+require(sf)#packing to read my spatial objects, EX. My Neely Henry Shapefile
+require(raster)#used for raster functions
+require(terra)#spatial analyst functions
+require(gdistance)#transition function package
 ```
 
 First I will start with analysis of our control individuals. Below we will calculate movement rates for both species as well as home range sizes. Additionally, we will look how movement rates differ throughout the year for each species. As well as compare straight line and in lake distance calculations (many studies in past have used straight line distance to represent movement)
@@ -95,17 +99,17 @@ Additionally, I add the movement rates (meters per day) as a new column to the d
 
 ```{r}
 
-Control = Control %>% group_by(RewardTag1) %>% slice(3:n())
+ControlFinal = Control %>% group_by(RewardTag1) %>% slice(3:n())
 
-Control$SL_M_D = Control$SL_M/Control$DaysElapsed
+ControlFinal$SL_M_D = ControlFinal$SL_M/ControlFinal$DaysElapsed
 
-Control
+ControlFinal
 ```
 
 Now we need to make sure that we have data for only alive fish. The GroupMovement column is indicative of this. We need to make sure that the group movement values are all "A" so dead fish movement is not included. Every fish was considered to be "D" or "dead" for each subsequent location after its first "D" code. 
 ```{r}
 
-Control = Control[Control$GroupMovement=="A",]
+ControlFinal = ControlFinal[ControlFinal$GroupMovement=="A",]
 
 ```
 In total, we are left with 686 step lengths for fish that were not displaced by tournaments and were used for natural movement analysis
@@ -113,38 +117,64 @@ In total, we are left with 686 step lengths for fish that were not displaced by 
 Here is a boxplot for looking at how the monthly movement rates differed between species. 
 ```{r}
 
+ControlFinal$MonthYear = strftime(ControlFinal$Date, format = "%Y-%m")
+levels(ControlFinal$MonthYear)
+
 #Boxplot comparing species movement over months. 
-ggplot(Control,aes(as.factor(Month),SL_M_D))+
+ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
       geom_boxplot(aes(fill=Species))+
       coord_cartesian(ylim=c(0,1600))+
       theme_classic(base_size=12)+
       scale_y_continuous(expand=c(0.013,0))+
-      labs(x="Month",y="Movement Speed (meters/week)")
+      labs(x="Month-Year",y="Movement Speed (meters/week)")
 
 ```
 Obviously this is hard to look at as there are many outliers across most of the months. Here I shrink down the plot and remove outliers to get a better look at what is going on with our movement across months.
 
+Trying something to get the year and month to not overlap each other
 ```{r}
-ggplot(Control,aes(as.factor(Month),SL_M_D))+
+ggplot(ControlFinal,aes(as.factor(YearMonth),SL_M_D))+
       geom_boxplot(aes(fill=Species),outlier.color=NA)+
       coord_cartesian(ylim=c(0,250))+
       theme_classic(base_size=12)+
       scale_y_continuous(expand=c(0.013,0))+
-      labs(x="Month",y="Movement Speed (meters/week)")
+      labs(x="Month-Year",y="Movement Speed (meters/week)")
 
 ```
-NEED TO PARSE OUT AND SEPARATE 2023 fish movement from 2024 fish movment (STARTED IN 4/23, ended in 4/24). For example, the 4 or april bar here is inclusive of data from both 2023 and 2024 because there is overlap. 
+Now we can calulcate the in lake distances for these fish which takes a substantial time to run on the computer. The only thing that will change is the inputs into the loop. To do this I load in the Neely Henry Shapefile that I created on ArcGisPro from Github. I then convert the shapefile into a raster which is then used to create a "cost" raster. The cost raster is indicative of the water and excludes land. It then calculates the most conservative distance between successive points while staying within the bounds of the reservoir. 
 
+The first thing we need to do is load in the shapefile
 
-Making a dataframe of temperatures for temperature data to add to a graph. Mean temperature for each month was obtained from the NWS website specifically looking at their air temp climatoloical data for Gadsden AL. 
 ```{r}
-Temperature = data.frame(Month = c(4,5,6,7,8,9,10,11,12,1,2,3,4), Year = c(2023,2023,2023,2023,2023,2023,2023,2023,2023,2024,2024,2024,2024),Mean_Temp_F = c(61.7,69.8,76.7,81.3,80.7,75.2,65.1,55.0,46.6,39.5,51.8,56.9,63.4))
+Neely = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/Data/NeelySHP_NAD_1983_2011.shp") 
+plot(Neely)
+```
+Now we need to convert the shapefile into a vector, then a raster, and then a transition matrix which is then used by the least cost distance functions. 
 
-Temperature$Mean_Temp_C = (Temperature$Mean_Temp_F-32)*(5/9)#Farenheit to Celsius conversion
+```{r}
+NeelyVec = vect(Neely)
+NeelyR = rast(NeelyVec, res = 0.00004)#res of 4.4 m grid cells 
+NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
 
-Temperature
+plot(NeelyRast)
+```
+Looks correct. Now I convert the cost raster into a transition layer (the input for the least-cost distance calculations) and then correct for corners. I have plotted the cost raster at the end.
+
+```{r}
+
+NeelyRast = raster(NeelyRast)#Converts spatraster to "raster" which is a different form of raster that the transition function needs in order to work properly. 
+NeelyTrans = transition(NeelyRast, transitionFunction = mean, 8)
+
+#Here we correct for corners
+NeelyTrans = geoCorrection(NeelyTrans, type = 'c', multpl=F)
+
+NeelyTransRast = raster(NeelyTrans)
+plot(NeelyTransRast)
+
 ```
 
-ALSO, NEED TO CALCULATE IN LAKE DISTANCE FOR CONTROL FISH. 
+
+
+
 
 
