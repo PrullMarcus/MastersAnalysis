@@ -153,7 +153,7 @@ Now we need to convert the shapefile into a vector, then a raster, and then a tr
 
 ```{r}
 NeelyVec = vect(Neely)
-NeelyR = rast(NeelyVec, res = 0.00004)#res of 4.4 m grid cells 
+NeelyR = rast(NeelyVec, res = 0.00004)#res of 4.4 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. 
 NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
 
 plot(NeelyRast)
@@ -169,11 +169,64 @@ NeelyTrans = transition(NeelyRast, transitionFunction = mean, 8)
 NeelyTrans = geoCorrection(NeelyTrans, type = 'c', multpl=F)
 
 NeelyTransRast = raster(NeelyTrans)
-plot(NeelyTransRast)
+plot(NeelyTransRast)#looks correct
 
 ```
 
+Before we run the loop we need to create a spatial object (points) from the lat/long columns from our control fish dataframe. The least cost function requires a spatial object as input into the caclculation that has the same coordinate reference system as the Neely Shapefile. 
 
+```{r}
+
+Control = sf::st_as_sf(Control, coords = c("Lat","Long"),crs = crs(Neely))#Change to control(adds geometry but wont get rid of anything).
+
+```
+
+Here I check to make sure the points show up on the same map.
+```{r}
+
+plot(NeelyRast)
+plot(Control, add=T)
+
+```
+They show up on the lake which is correct. If the CRS weren't matched up they wouldn't show up correctly. 
+
+
+#### FILTER EVERYTHING AT THE END INSTEAD OF DOING THE INITIAL FILTER FOR THE SL PART!!!!!
+
+
+
+
+Here we do the same thing as before. The only thing that changes is the outputs are saved under a different name(LC = least cost) whereas before it was SL (straight-line). Additionally, the "distm" function is now changed to costDistance from the gdistance package in order to do least-cost distances (within lake distances). 
+```{r}
+
+tag_numbs = unique(Control$RewardTag1)#unique tag numbers
+n_fish = length(tag_nums)#number of fish
+
+control_LC = numeric()
+control_LC_days = numeric()
+
+for(i in 1:n_fish){
+  
+  new_tag = tag_nums[i]
+  new_dat = subset(Control,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  ControlDist = numeric(tmax)
+  days = numeric(tmax)
+  
+  for(t in 2:tmax){
+    
+    dist_m = gdistance:::costDistance(NeelyTrans, fromCoords = sf::st_coordinates(new_dat[(t-1),]),
+                                                  toCoords = sf::st_coordinates(new_dat[t,]))
+    ControlDist[t] = dist_m
+    days[t] = as.numeric(new_dat$Date[t]-new_dat$Date[t-1])
+  }
+  control_LC = append(control_LC,ControlDist)
+  control_LC_days = append(control_LC_days,days)
+}
+control_LC
+control_LC_days
+
+```
 
 
 
