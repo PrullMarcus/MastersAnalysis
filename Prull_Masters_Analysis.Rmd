@@ -153,7 +153,7 @@ Now we need to convert the shapefile into a vector, then a raster, and then a tr
 
 ```{r}
 NeelyVec = vect(Neely)
-NeelyR = rast(NeelyVec, res = 0.00004)#res of 4.4 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. 
+NeelyR = rast(NeelyVec, res = 0.00011)#res of 11.1 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. tried 00004 but it took way too long. 
 NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
 
 plot(NeelyRast)
@@ -228,6 +228,6 @@ control_LC_days
 
 ```
 
-
+I think the INF values have to deal with points that don't fall in a pixel or are not connected to the LC matrix. I am gonna remake the matrix and give land a super high cost so it won't go through land unless ABSOLUTELY NECESSARY. 
 
 
