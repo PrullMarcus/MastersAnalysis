@@ -133,7 +133,7 @@ Obviously this is hard to look at as there are many outliers across most of the 
 
 Trying something to get the year and month to not overlap each other
 ```{r}
-ggplot(ControlFinal,aes(as.factor(YearMonth),SL_M_D))+
+ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
       geom_boxplot(aes(fill=Species),outlier.color=NA)+
       coord_cartesian(ylim=c(0,250))+
       theme_classic(base_size=12)+
@@ -141,7 +141,7 @@ ggplot(ControlFinal,aes(as.factor(YearMonth),SL_M_D))+
       labs(x="Month-Year",y="Movement Speed (meters/week)")
 
 ```
-Now we can calulcate the in lake distances for these fish which takes a substantial time to run on the computer. The only thing that will change is the inputs into the loop. To do this I load in the Neely Henry Shapefile that I created on ArcGisPro from Github. I then convert the shapefile into a raster which is then used to create a "cost" raster. The cost raster is indicative of the water and excludes land. It then calculates the most conservative distance between successive points while staying within the bounds of the reservoir. 
+Now we can calculate the in lake distances for these fish which takes a substantial time to run on the computer. The only thing that will change is the inputs into the loop. To do this I load in the Neely Henry Shapefile that I created on ArcGisPro from Github. I then convert the shapefile into a raster which is then used to create a "cost" raster. The cost raster is indicative of the water and excludes land. It then calculates the most conservative distance between successive points while staying within the bounds of the reservoir. 
 
 The first thing we need to do is load in the shapefile
 
@@ -177,15 +177,15 @@ Before we run the loop we need to create a spatial object (points) from the lat/
 
 ```{r}
 
-Control = sf::st_as_sf(Control, coords = c("Lat","Long"),crs = crs(Neely))#Change to control(adds geometry but wont get rid of anything).
+Control = sf::st_as_sf(Control, coords = c("Long","Lat"),crs = crs(Neely))#Change to control(adds geometry but wont get rid of anything).
 
 ```
 
 Here I check to make sure the points show up on the same map.
 ```{r}
 
-plot(NeelyRast)
-plot(Control, add=T)
+plot(NeelyTransRast)
+plot(Control,add=T)
 
 ```
 They show up on the lake which is correct. If the CRS weren't matched up they wouldn't show up correctly. 
