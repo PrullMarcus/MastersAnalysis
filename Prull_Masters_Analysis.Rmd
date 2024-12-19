@@ -78,8 +78,7 @@ for(i in 1:n_fish){
   control_SL = append(control_SL,ControlDist)
   control_SL_days = append(control_SL_days,days)
 }
-control_SL
-control_SL_days
+
 
 ```
 
@@ -99,48 +98,11 @@ Additionally, I add the movement rates (meters per day) as a new column to the d
 
 ```{r}
 
-ControlFinal = Control %>% group_by(RewardTag1) %>% slice(3:n())
-
-ControlFinal$SL_M_D = ControlFinal$SL_M/ControlFinal$DaysElapsed
-
-ControlFinal
-```
-
-Now we need to make sure that we have data for only alive fish. The GroupMovement column is indicative of this. We need to make sure that the group movement values are all "A" so dead fish movement is not included. Every fish was considered to be "D" or "dead" for each subsequent location after its first "D" code. 
-```{r}
-
-ControlFinal = ControlFinal[ControlFinal$GroupMovement=="A",]
+Control$SL_M_D = Control$SL_M/Control$DaysElapsed
 
 ```
-In total, we are left with 686 step lengths for fish that were not displaced by tournaments and were used for natural movement analysis
 
-Here is a boxplot for looking at how the monthly movement rates differed between species. 
-```{r}
 
-ControlFinal$MonthYear = strftime(ControlFinal$Date, format = "%Y-%m")
-levels(ControlFinal$MonthYear)
-
-#Boxplot comparing species movement over months. 
-ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
-      geom_boxplot(aes(fill=Species))+
-      coord_cartesian(ylim=c(0,1600))+
-      theme_classic(base_size=12)+
-      scale_y_continuous(expand=c(0.013,0))+
-      labs(x="Month-Year",y="Movement Speed (meters/week)")
-
-```
-Obviously this is hard to look at as there are many outliers across most of the months. Here I shrink down the plot and remove outliers to get a better look at what is going on with our movement across months.
-
-Trying something to get the year and month to not overlap each other
-```{r}
-ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
-      geom_boxplot(aes(fill=Species),outlier.color=NA)+
-      coord_cartesian(ylim=c(0,250))+
-      theme_classic(base_size=12)+
-      scale_y_continuous(expand=c(0.013,0))+
-      labs(x="Month-Year",y="Movement Speed (meters/week)")
-
-```
 Now we can calculate the in lake distances for these fish which takes a substantial time to run on the computer. The only thing that will change is the inputs into the loop. To do this I load in the Neely Henry Shapefile that I created on ArcGisPro from Github. I then convert the shapefile into a raster which is then used to create a "cost" raster. The cost raster is indicative of the water and excludes land. It then calculates the most conservative distance between successive points while staying within the bounds of the reservoir. 
 
 The first thing we need to do is load in the shapefile
@@ -153,7 +115,7 @@ Now we need to convert the shapefile into a vector, then a raster, and then a tr
 
 ```{r}
 NeelyVec = vect(Neely)
-NeelyR = rast(NeelyVec, res = 0.00011)#res of 11.1 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. tried 00004 but it took way too long. 
+NeelyR = rast(NeelyVec, res = 0.00008)#res of 8.8 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. tried 00004 but it took way too long. 
 NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
 
 plot(NeelyRast)
@@ -190,12 +152,6 @@ plot(Control,add=T)
 ```
 They show up on the lake which is correct. If the CRS weren't matched up they wouldn't show up correctly. 
 
-
-#### FILTER EVERYTHING AT THE END INSTEAD OF DOING THE INITIAL FILTER FOR THE SL PART!!!!!
-
-
-
-
 Here we do the same thing as before. The only thing that changes is the outputs are saved under a different name(LC = least cost) whereas before it was SL (straight-line). Additionally, the "distm" function is now changed to costDistance from the gdistance package in order to do least-cost distances (within lake distances). 
 ```{r}
 
@@ -224,10 +180,74 @@ for(i in 1:n_fish){
   control_LC_days = append(control_LC_days,days)
 }
 control_LC
-control_LC_days
 
 ```
 
 I think the INF values have to deal with points that don't fall in a pixel or are not connected to the LC matrix. I am gonna remake the matrix and give land a super high cost so it won't go through land unless ABSOLUTELY NECESSARY. 
 
+```{r}
 
+Control = cbind(control_LC, Control)
+colnames(Control)[1]<-"LC_M"#least-cost meters
+Control$LC_M_D = Control$LC_M/Control$DaysElapsed
+
+```
+#ControlFinal = Control %>% group_by(RewardTag1) %>% slice(3:n())
+
+#ControlFinal$SL_M_D = ControlFinal$SL_M/ControlFinal$DaysElapsed
+
+#ControlFinal
+
+Now we need to make sure that we have data for only alive fish. The GroupMovement column is indicative of this. We need to make sure that the group movement values are all "A" so dead fish movement is not included. Every fish was considered to be "D" or "dead" for each subsequent location after its first "D" code. 
+```{r}
+
+ControlFinal = Control %>% group_by(RewardTag1) %>% slice(3:n())
+ControlFinal = ControlFinal[ControlFinal$GroupMovement=="A",]
+
+```
+
+In total, we are left with 686 step lengths for fish that were not displaced by tournaments and were used for natural movement analysis
+
+Firstly, lets look at how the straight-line movement rates look relative to the least cost rates.  
+
+```{r}
+
+#1:1 indicates complete agreement, this graph includes a few giant movements/outliers
+plot(LC_M_D~SL_M_D, data = ControlFinal,ylim = c(0,2100), xlim = c(0,2100))
+abline(a = 0, b = 1, col = "red")
+
+#Zoomed in plot that is indicative of most movements <500 m/d
+plot(LC_M_D~SL_M_D, data=ControlFinal, ylim = c(0,500), xlim = c(0,500))
+abline(a = 0, b = 1, col = "red")
+
+```
+The above plot clearly shows the potential for underestimation of movement rates even at small movement values. 
+
+
+Here is a boxplot for looking at how the monthly movement rates differed between species. 
+```{r}
+
+ControlFinal$MonthYear = strftime(ControlFinal$Date, format = "%Y-%m")
+levels(ControlFinal$MonthYear)
+
+#Boxplot comparing species movement over months. 
+ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
+      geom_boxplot(aes(fill=Species))+
+      coord_cartesian(ylim=c(0,1600))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Month-Year",y="Movement Speed (meters/week)")
+
+```
+Obviously this is hard to look at as there are many outliers across most of the months. Here I shrink down the plot and remove outliers to get a better look at what is going on with our movement across months.
+
+Trying something to get the year and month to not overlap each other
+```{r}
+ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
+      geom_boxplot(aes(fill=Species),outlier.color=NA)+
+      coord_cartesian(ylim=c(0,250))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Month-Year",y="Movement Speed (meters/week)")
+
+```
