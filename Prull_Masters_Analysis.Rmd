@@ -119,6 +119,7 @@ NeelyR = rast(NeelyVec, res = 0.00008)#res of 8.8 m grid cells, value of 1 is 1 
 NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
 
 plot(NeelyRast)
+
 ```
 Looks correct. Now I convert the cost raster into a transition layer (the input for the least-cost distance calculations) and then correct for corners. I have plotted the cost raster at the end.
 
@@ -183,7 +184,9 @@ control_LC
 
 ```
 
-I think the INF values have to deal with points that don't fall in a pixel or are not connected to the LC matrix. I am gonna remake the matrix and give land a super high cost so it won't go through land unless ABSOLUTELY NECESSARY. 
+I think the INF values have to deal with points that don't fall in a pixel or are not connected to the LC matrix. I am gonna remake the matrix and give land a super high cost so it won't go through land unless ABSOLUTELY NECESSARY.
+
+THAT DID NOT WORK..... Meet with valente do discuss this. 
 
 ```{r}
 
@@ -251,3 +254,57 @@ ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
       labs(x="Month-Year",y="Movement Speed (meters/week)")
 
 ```
+
+
+######################################################################################
+######################################################################################
+######################################################################################
+
+
+DISPERSAL STUFF 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+######################################################################################
+######################################################################################
+######################################################################################
+
+
+
+
+HOMERANGE STUFF 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+######################################################################################
+######################################################################################
+######################################################################################
+
+
+
+TAGGING SIMULATION 
