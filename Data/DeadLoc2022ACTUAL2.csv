@@ -1,5 +1,5 @@
-﻿Species,Frequency,DeadLat,DeadLong,ISNUMBER
-ALB,148.011,,     ,
+﻿Species,Frequency,Lat,Long,ISNUMBER
+ALB,148.011,,,
 LMB,148.021,33.87091667,-86.1031,TRUE
 LMB,148.031,,,
 ALB,148.041,33.905,-86.07513333,TRUE
