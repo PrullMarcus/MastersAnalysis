@@ -244,6 +244,10 @@ ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
       scale_y_continuous(expand=c(0.013,0))+
       labs(x="Month-Year",y="Movement Speed (meters/week)")
 
+st_write(ControlFinal,"ControlTester.csv", layer_options="GEOMETRY=AS_XY")
+
+
+
 ```
 Obviously this is hard to look at as there are many outliers across most of the months. Here I shrink down the plot and remove outliers to get a better look at what is going on with our movement across months.
 
@@ -363,7 +367,12 @@ colnames(Dispersal)[1]<-"Days_Step"#Days between previous location and current l
 
 Dispersal$LC_M_D = Dispersal$LC_Step_m/Dispersal$Days_Step
 
-Control$LC_M_D = Control$LC_M/Control$DaysElapsed
+Dispersal$Weeks_Since_Rel = Dispersal$Days_Since_Rel/7
+
+plot(Dispersal$LC_M_D~Dispersal$Weeks_Since_Rel, ylim=c(0,1500),xlim=c(0,20))
+
+#THIS IS HOW TO SAVE THE SPATIAL GEOMETRY BACK INTO A CSV. 
+#st_write(Dispersal,"DispersalTESTER.csv", layer_options = "GEOMETRY=AS_XY")
 
 ```
 
