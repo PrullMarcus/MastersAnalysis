@@ -108,7 +108,7 @@ Now we can calculate the in lake distances for these fish which takes a substant
 The first thing we need to do is load in the shapefile
 
 ```{r}
-Neely = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/Data/NeelySHP_NAD_1983_2011.shp") 
+Neely = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/Data/NeelySHP_Jan2024)_NAD_1983_2011.shp") 
 plot(Neely)
 ```
 Now we need to convert the shapefile into a vector, then a raster, and then a transition matrix which is then used by the least cost distance functions. 
@@ -116,7 +116,12 @@ Now we need to convert the shapefile into a vector, then a raster, and then a tr
 ```{r}
 NeelyVec = vect(Neely)
 NeelyR = rast(NeelyVec, res = 0.00008)#res of 8.8 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. tried 00004 but it took way too long. 
+
 NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
+
+
+NeelyRast[is.na(NeelyRast)] = 100
+
 
 plot(NeelyRast)
 
@@ -126,7 +131,7 @@ Looks correct. Now I convert the cost raster into a transition layer (the input 
 ```{r}
 
 NeelyRast = raster(NeelyRast)#Converts spatraster to "raster" which is a different form of raster that the transition function needs in order to work properly. 
-NeelyTrans = transition(NeelyRast, transitionFunction = mean, 8)
+NeelyTrans = transition(1/NeelyRast, transitionFunction = mean, directions = 8)
 
 #Here we correct for corners
 NeelyTrans = geoCorrection(NeelyTrans, type = 'c', multpl=F)
@@ -136,7 +141,7 @@ plot(NeelyTransRast)#looks correct
 
 ```
 
-Before we run the loop we need to create a spatial object (points) from the lat/long columns from our control fish dataframe. The least cost function requires a spatial object as input into the caclculation that has the same coordinate reference system as the Neely Shapefile. 
+Before we run the loop we need to create a spatial object (points) from the lat/long columns from our control fish dataframe. The least cost function requires a spatial object as input into the calculation that has the same coordinate reference system as the Neely Shapefile. 
 
 ```{r}
 
@@ -185,8 +190,6 @@ control_LC
 ```
 
 I think the INF values have to deal with points that don't fall in a pixel or are not connected to the LC matrix. I am gonna remake the matrix and give land a super high cost so it won't go through land unless ABSOLUTELY NECESSARY.
-
-THAT DID NOT WORK..... Meet with valente do discuss this. 
 
 ```{r}
 
@@ -260,13 +263,115 @@ ggplot(ControlFinal,aes(as.factor(MonthYear),SL_M_D))+
 ######################################################################################
 ######################################################################################
 
-
 DISPERSAL STUFF 
 
 
+First of all I will load in my dispersal data and then sort it to where the group movement variable is set to "A" to make sure we are only calculating movement for fish that are alive (same as we did for the control portion). I then created a spatial points class from the lat longs and then plotted them on the Neely shp file to make sure they show up on the map.
+```{r}
+
+Dispersal = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/Data/DispersalFishFinal.csv")
+Dispersal = subset(Dispersal, GroupMovement == "A")#subsetting to only alive fish
+Dispersal = sf::st_as_sf(Dispersal, coords = c("Long","Lat"),crs = crs(Neely))#making spatial object out of lat/long columns
+
+plot(Neely$geometry)
+plot(Dispersal, add = T)
+
+```
+For tournament displaced fish their starting location is the boat ramp on the day they were caught/released and then every successive location was collected via manual tracking. Thus, we need to make sure that our dispersal fish have more than 1 observation to get a step lenght on them. Here I filter fish down to n>1. This removes fish that were reported as released in a tournament but we were never able to find afterwards. 
+```{r}
+
+Dispersal = Dispersal %>% group_by(RewardTag1) %>% filter(n()>1)
+
+```
+
+
+Here I make a date column which will be used to calculate days elapsed between step lengths as well as days elapsed since the fish was released at a tournament boat launch. 
+```{r}
+
+Dates = make_date(year=Dispersal$Year,month=Dispersal$Month,day=Dispersal$Day)
+Dispersal = cbind(Dates,Dispersal)
+colnames(Dispersal)[1] <- "Date"
+
+```
 
 
 
+Here is the loop that calculates each given fishes proximity to the ramp over time. Additionally, it calculates the movement rates/speeds of these fish over time. Both are stored in separate vectors. The proximity to the ramp is calculated by just doing a least cost distance of each location to each fish's starting location (the boat ramp). The movement rates/speeds are calculated in the same manner as they were for the control (non translocated fish) by calculating the step length between successive locations and then dividing by the time elapsed between the steps.Additionally, we add a vector that is WEEKS ELAPSED post capture to help with the first goal. 
+
+```{r}
+
+
+tag_numbs = unique(Dispersal$RewardTag1)#unique tag numbers
+n_fish = length(tag_numbs)#number of fish
+
+Disp_LC_Prox = numeric()
+Disp_LC_Step = numeric()
+Disp_Days_Step = numeric()
+Disp_Days_Rel = numeric()
+
+#control_LC = numeric()
+#control_LC_days = numeric()
+
+for(i in 1:n_fish){
+  
+  new_tag = tag_numbs[i]
+  new_dat = subset(Dispersal,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  Dispersal_prox = numeric(tmax)
+  Dispersal_step = numeric(tmax)
+  Days_Step = numeric(tmax)
+  Days_Rel = numeric(tmax)
+  
+  for(t in 2:tmax){
+    
+    prox_m = gdistance:::costDistance(NeelyTrans, fromCoords = sf::st_coordinates(new_dat[1,]),
+                                                  toCoords = sf::st_coordinates(new_dat[t,]))
+    step_m = gdistance::costDistance(NeelyTrans, fromCoords = sf::st_coordinates(new_dat[(t-1),]),
+                                                  toCoords = sf::st_coordinates(new_dat[t,]))
+    Dispersal_prox[t] = prox_m
+    Dispersal_step[t] = step_m
+    
+    Days_Step[t] = as.numeric(new_dat$Date[t]-new_dat$Date[t-1])
+    Days_Rel[t] = as.numeric(new_dat$Date[t]-new_dat$Date[1])
+    
+  }
+  Disp_LC_Prox = append(Disp_LC_Prox,Dispersal_prox)
+  Disp_LC_Step = append(Disp_LC_Step,Dispersal_step)
+  
+  Disp_Days_Step = append(Disp_Days_Step,Days_Step)
+  Disp_Days_Rel = append(Disp_Days_Rel,Days_Rel)
+}
+Disp_LC_Prox
+Disp_LC_Step
+Disp_Days_Rel
+Disp_Days_Step
+
+```
+```{r}
+
+Dispersal = cbind(Disp_LC_Prox, Dispersal)
+colnames(Dispersal)[1]<-"LC_Prox_m"#least-cost meters proximity to release ramp
+
+Dispersal = cbind(Disp_LC_Step, Dispersal)
+colnames(Dispersal)[1]<-"LC_Step_m"#least cost step length in meters
+
+Dispersal = cbind(Disp_Days_Rel, Dispersal)
+colnames(Dispersal)[1]<-"Days_Since_Rel"#Days since fish was initial released
+
+Dispersal = cbind(Disp_Days_Step, Dispersal)
+colnames(Dispersal)[1]<-"Days_Step"#Days between previous location and current location for which the step length was calculated
+
+Dispersal$LC_M_D = Dispersal$LC_Step_m/Dispersal$Days_Step
+
+Control$LC_M_D = Control$LC_M/Control$DaysElapsed
+
+```
+
+###### MAKE GRAPHS HERE 
+###### PROX TO RAMP OVER TIME
+###### MOVEMENT SPEEDS OVER TIME 
+###### PERCENT WITHIN 3 km over time
+###### ETC. 
 
 
 
@@ -281,7 +386,7 @@ DISPERSAL STUFF
 ######################################################################################
 ######################################################################################
 
-
+Here will will calculate homeranges for the fish that we have enough datapoints for. 
 
 
 HOMERANGE STUFF 
