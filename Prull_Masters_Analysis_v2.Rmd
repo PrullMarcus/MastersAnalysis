@@ -18,6 +18,8 @@ require(sf)#packing to read my spatial objects, EX. My Neely Henry Shapefile
 require(raster)#used for raster functions
 require(terra)#spatial analyst functions
 require(gdistance)#transition function package
+require(adehabitatHR)#Homerange functions
+require(adehabitatLT)#Need this for Brownian Bridge Movement Model
 ```
 
 First we need to read in my files from github. First file being read into R is the tracking data master sheet followed by my shapefile of Neely Henry which will be utilized later. Additionally, I load in the sections SHP file which will be used later on for the main model. 
@@ -446,24 +448,108 @@ TestData = T_All_locs %>%
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 ## Step Selection (Dispersal Efficiency)
 
 ## Distance displaced by tournament
 
-## Homerange 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Homerange Analysis
+
+For the homerange analysis we are going to calculate homeranges in a couple different ways. Most fisheries papers, however, use Kernel density homeranges. Some of these homeranges may not be able to be calculated due to low sample size but we will see. We don't want to include the tagging location in our homerange analysis. Therefore, we want 2:n() observations. Our data set will be defined as NT_HR (Non-tournament Homerange)
+
+```{r}
+
+NT_HR = subset(NT_Manuals_All,GroupMovement == "A")#subsets down to just alive fish. 
+NT_HR = NT_HR %>% group_by(RewardTag1) %>% slice(2:n())#This gets rid of tagging location from data.
+NT_HR = sf::st_as_sf(NT_HR, coords=c("Long","Lat"),crs= crs(NeelySHP))#turns into spatial object
+
+```
+
+Now that the data is filtered correctly we can try to calculate these homeranges for our non-tournament fish. 
+
+### Minimum Convex Polygon
+For minimum convex polygon home-ranges the function will not run unless there are "5 relocations" so we need to make sure that we are only trying to fit this for fish with 5 or more locations. 
+```{r}
+NT_HR = NT_HR %>% group_by(RewardTag1) %>% filter(n()>4)
+NT_HR = as(NT_HR, "Spatial")
+NT_mcp95 = mcp(NT_HR[,"RewardTag1"],percent = 50, unin="m", unout="m2")# is unit in correct?????
+
+NT_mcp95
+```
+
+### Kernel Density NEED TO WORK ON THIS........
+```{r}
+
+KernelHrefEpa_NT = kernelUD(NT_HR[,"RewardTag1"], h="href", kern="epa",boundary = NeelySHP)
+
+image(KernelHrefEpa_NT)
+kernel.area(KernelHrefEpa_NT)#column is each fish
+
+
+plot(getverticeshr(KernelHrefEpa_NT))
+
+NT_KDE95 = st_as_sf(getverticeshr(KernelHrefEpa_NT, percent = 95))
+
+```
+
+### Local Convex Hull
+
+### Brownian Bridge Home Range
+
+```{r}
+
+NT_HR_Traj = as.ltraj(xy=coordinates(NT_HR),date=as.POSIXct(NT_HR$Date),id=NT_HR$RewardTag1,typeII=T)#type II is asking whether the specific time is included (Ex. 12:15 PM, 1:00 AM, etc.)
+
+plot(NT_HR_Traj)
+
+```
+```{r}
+
+par(mar=c(.1,.1,.1,.1))#wont plot results unless I shrink margins. 
+sigma1 = liker(NT_HR_Traj, sig2=0, rangesig1 = c(0,10000))
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ## Alive vs Dead Movement
 
@@ -492,13 +578,6 @@ TestData = T_All_locs %>%
 ######################################################################################
 ######################################################################################
 ######################################################################################
-
-Here will will calculate homeranges for the fish that we have enough datapoints for. 
-
-
-HOMERANGE STUFF 
-
-
 
 
 
