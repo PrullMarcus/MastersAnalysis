@@ -30,15 +30,16 @@ NeelySHP = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/
 NeelySections = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/SHP%20Files/NeelySections.shp")
 
 ```
+
 Here are both of the shapefiles plotted just to ensure they visually look correct. 
 ```{r}
 plot(NeelySHP$geometry)
 plot(NeelySections$geometry)#You can barely see the section boundaries but it does appear they are there. 
 ```
+
 First I have some tidying up to do to make sure everything runs smoothly. 
 
 Firstly, all the dates in the tracking data are in Month, Day, Year format with a separate column for each. I use the lubridate package to create a new "Date" column which will store all three of those into 1 column as a "date" format instead of just a numeric value. This will allow me to subtract dates from each other later which is necessary for movement values over time/rates. 
-
 ```{r}
 
 Date = make_date(year = TrackMaster$Year, month = TrackMaster$Month, day = TrackMaster$Day)
@@ -121,10 +122,8 @@ Now, because the first location is the original tagging location, the distance f
 Additionally, I add the movement rates as a new column to the data
 
 ```{r}
-
 NT_Manuals_All$SL_M_D = NT_Manuals_All$SL_M/NT_Manuals_All$DaysFromLastLoc#Straight-line meters per day moved
 NT_Manuals_All$SL_M_W = NT_Manuals_All$SL_M/(NT_Manuals_All$DaysFromLastLoc/7)#Straight-line Meters per week moved
-
 ```
 
 ### Least-cost (in-lake) distances
@@ -217,19 +216,11 @@ NT_Manuals_All$LC_M_W = NT_Manuals_All$LC_M/(NT_Manuals_All$DaysFromLastLoc/7)
 
 Just a raw plot to show differences in SL vs LC movement rates. Appears to be an outlier that needs to be addressed. 
 ```{r}
-
 plot(NT_Manuals_All$LC_M_W~NT_Manuals_All$SL_M_W,ylim=c(0,15000),xlim=c(0,15000))
 abline(a=0,b=1)
 
-
 plot(NT_Manuals_All$LC_M_W~NT_Manuals_All$SL_M_W,ylim=c(0,5000),xlim=c(0,5000))
 abline(a=0,b=1)
-
-
-```
-Here is movement rates of tags coding alive vs movement of tags after their first dead code. Appears to be a few outliers but most of the points appear to be essentially 0. 
-```{r}
-boxplot(NT_Manuals_All$LC_M_W~NT_Manuals_All$GroupMovement,ylim=c(0,400))
 ```
 
 ## Movement Rates by species
@@ -290,34 +281,26 @@ Now we want to look at tournament dispersal movement for fish displaced by tourn
 First we need to isolate our alive tournament fish to calculate our values. 
 
 ```{r}
-
 T_Manuals_All = subset(Manuals, TournamentRelease == "Y")
 T_Manuals_All = T_Manuals_All %>% group_by(RewardTag1) %>% filter(n()>1)
-
 ```
 
 Here I make a date column which will be used to calculate days elapsed between step lengths as well as days elapsed since the fish was released at a tournament boat launch. 
 ```{r}
-
 Dates = make_date(year=T_Manuals_All$Year,month=T_Manuals_All$Month,day=T_Manuals_All$Day)
 T_Manuals_All = cbind(Dates,T_Manuals_All)
 colnames(T_Manuals_All)[1] <- "Date"
-
 ```
 
 I  created a spatial points class from the lat longs for the displaced fish and then plotted them on the Neely shp file to make sure they show up on the map.
 ```{r}
-
 T_Manuals_All = sf::st_as_sf(T_Manuals_All, coords = c("Long","Lat"),crs = crs(NeelySHP))#making spatial object out of lat/long columns
 
 plot(NeelySHP$geometry)
 plot(T_Manuals_All, add = T)
-
 ```
 
-
 Here is the loop that calculates each given fishes proximity to the ramp over time. Additionally, it calculates the movement rates of these fish over time. Both are stored in separate vectors. The proximity to the ramp is calculated by just doing a least cost distance of each location to each fish's starting location (the boat ramp). The movement rates/speeds are calculated in the same manner as they were for the control (non translocated fish) by calculating the step length between successive locations and then dividing by the time elapsed between the steps.Additionally, we add a vector that is WEEKS ELAPSED post capture to help with the first goal. 
-
 ```{r}
 Start = Sys.time()
 
@@ -392,100 +375,167 @@ plot(T_Manuals_All$LC_Step_m~T_Manuals_All$Weeks_Since_Rel)
 
 #THIS IS HOW TO SAVE THE SPATIAL GEOMETRY BACK INTO A CSV. 
 #st_write(Dispersal,"DispersalTESTER.csv", layer_options = "GEOMETRY=AS_XY")
+```
+
+Add graphs about proximity, movement speeds, etc. over time. (by species)? 
+
+## Step Selection (Dispersal Efficiency)
+
+## Distance displaced by tournaments
+
+All we need for this is to filter the main data frame to the row before the fish was caught (its last known location before being caught) and then the row with the ramp it was translocated to. 
+
+```{r}
+DistanceTransloc = TrackMaster %>% 
+                    filter(RewardTag1 %in% RewardTag1[TournamentRelease=="Y"])
+```
+
+This should lead the filter by 1 row thus giving us its last known location and then every location after that.
+```{r}
+DistanceTransloc = DistanceTransloc %>% 
+                   group_by(RewardTag1) %>% 
+                   filter(TournamentRelease == "Y" | lead(TournamentRelease=="Y"))
+```
+
+Now, all we need is the first two observations to calculate how far these fish were translocated from their original position by tournament anglers
+```{r}
+DistanceTransloc = DistanceTransloc %>% 
+                   group_by(RewardTag1) %>%
+                   slice(1:2)
+```
+
+This loop should return the relative distance that each fish was translocated to a tournament weigh in site in meters...
+```{r}
+tag_nums = unique(DistanceTransloc$RewardTag1)
+n_fish = length(tag_nums)# of individual fish making up dataset
+T_Transloc_Dist = numeric()
+#Outside loop that selects tag-number 
+for(i in 1:n_fish){
+  
+  new_tag = tag_nums[i]
+  new_dat = subset(DistanceTransloc,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  Transloc_Dist = numeric(tmax)
+  days = numeric(tmax)
+  
+  for(t in 2:tmax){
+    
+    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[t-1],new_dat$Lat[t-1]))#
+    Transloc_Dist[t] = dist_m
+    
+  }
+  
+  T_Transloc_Dist = append(T_Transloc_Dist,Transloc_Dist)
+}
+T_Transloc_Dist#this is in meters
+```
+
+```{r}
+T_Transloc_Dist = T_Transloc_Dist[T_Transloc_Dist!=0]
+
+T_Transloc_Dist_KM = T_Transloc_Dist/1000
+
+DistanceTransloc = DistanceTransloc %>% group_by(RewardTag1) %>% slice(2)
+
+DistanceTransloc = cbind(DistanceTransloc,T_Transloc_Dist_KM)
+
+colnames(DistanceTransloc)[26]="T_Transloc_Dist_KM"
+```
+
+Plot of translocated distance distribution (by species)
+```{r}
+ALB_Transloc = filter(DistanceTransloc, Species == "ALB")
+
+h1 = hist(DistanceTransloc$T_Transloc_Dist_KM, breaks = c(seq(0,26,2)),
+          xlab = "Distance Translocated By Angler (km)",
+          ylab = "# of fish",col="Red")
+
+h2 = hist(ALB_Transloc$T_Transloc_Dist_KM, breaks = c(seq(0,26,2)),col = "Blue")
+
+plot(h1, col = "Red", xlab = "KM Translocated by Angler",main=NULL)
+plot(h2, col = "Blue", add=T)
+legend(22,10,c("LMB", "ALB"), fill = c("Red","Blue"), title = "Species")
 
 ```
-## Proximity to ramp. 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ## Homing
 
-Somehow need to keep the row before they were released and then run how far their proximity is to that location over time. To get a decent relative location we may need to include ALL locations (not just manual). A lot of the tournament fish were not manually tracked until AFTER they were reported by the angler. Then, we need to loop the distance between their successive locations and their first location (The last known location before they were caught). 
-
-
-
-
 This returns all locations for a fish that was AT ANY POINT caught and released in a tournament. 
 ```{r}
-T_All_locs = TrackMaster %>% 
+Homing = TrackMaster %>% 
              group_by(RewardTag1) %>%
              filter(any(TournamentRelease == "Y")) %>%
              ungroup
 ```
 
-Now all we need for the homing code is the LAST KNOWN LOCATION of a fish before it was caught and every location thereafter. 
+This should lead the filter by 1 row thus giving us its last known location and then every location after that.
+```{r}
+Homing = Homing %>% 
+         group_by(RewardTag1) %>% 
+         filter(TournamentRelease == "Y" | lead(TournamentRelease=="Y"))
+```
 
+Now we need to setup a loop that calculates the relative distance between each successive location and its last known position before it was translocated by an angler... We essentially did this for the proximity to boat ramp loop.
+
+Setup vectors and loop here 
 ```{r}
 
-Test = function(x){
+tag_nums = unique(Homing$RewardTag1)
+n_fish = length(tag_nums)# of individual fish making up dataset
+
+WeeksSinceRel = numeric()
+Homing_SL = numeric()
+
+#Outside loop that selects tag-number 
+for(i in 1:n_fish){
   
-  v = (x-1)
-  v[v>0]
+  new_tag = tag_nums[i]
+  new_dat = subset(Homing,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  Homing_Dist = numeric(tmax)
+  WeeksFromRel = numeric(tmax)
   
+  for(t in 2:tmax){
+    
+    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[1],new_dat$Lat[1]))#
+    Homing_Dist[t] = dist_m
+    WeeksFromRel[t] = as.numeric(new_dat$Date[t]-new_dat$Date[2])/7
+    
+  }
+  Homing_SL = append(Homing_SL,Homing_Dist)
+  WeeksSinceRel = append(WeeksSinceRel, WeeksFromRel)
 }
 
+Homing = cbind(Homing,Homing_SL)
+colnames(Homing)[27]<-"ProxMToLastKnownLocation"
+
+Homing = cbind(Homing,WeeksSinceRel)
+colnames(Homing)[28]<-"WeeksSinceRel"
+
+Homing
 ```
 
-
+Graphs, NEED TO MAKE SURE THERE IS SOME INDICATION WHETHER THEY ARE ALIVE OR NOT. Add POINTS FOR DETECTIONS, PERCENTAGES, SPECIES,  
 ```{r}
 
-TestData = T_All_locs %>%
-           group_by(RewardTag1) %>%
-           slice()
+Homing = Homing %>% group_by(RewardTag1) %>% slice(2:n())#Gets rid of double zeroes and intial location
+
+ggplot(data = Homing, aes(x = WeeksSinceRel, y = ProxMToLastKnownLocation/1000, group = RewardTag1,
+                          color = as.factor(RewardTag1)))+
+  geom_line()
+
 ```
 
-
-## Step Selection (Dispersal Efficiency)
-
-## Distance displaced by tournament
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Homerange Analysis
+## Homerange Analysis MIGHT NOT BE POSSIBLE (TOO SMALL OF SAMPLE SIZES)
 
 For the homerange analysis we are going to calculate homeranges in a couple different ways. Most fisheries papers, however, use Kernel density homeranges. Some of these homeranges may not be able to be calculated due to low sample size but we will see. We don't want to include the tagging location in our homerange analysis. Therefore, we want 2:n() observations. Our data set will be defined as NT_HR (Non-tournament Homerange)
 
 ```{r}
-
-NT_HR = subset(NT_Manuals_All,GroupMovement == "A")#subsets down to just alive fish. 
+NT_HR = subset(TrackMaster, GroupMovement == "A")#only alive fish
+NT_HR = subset(NT_HR, TournamentRelease != "Y")#only non-tournament fish
+NT_HR = subset(NT_HR, ManuallyTracked == "Y")#only fish that were manually tracked
 NT_HR = NT_HR %>% group_by(RewardTag1) %>% slice(2:n())#This gets rid of tagging location from data.
 NT_HR = sf::st_as_sf(NT_HR, coords=c("Long","Lat"),crs= crs(NeelySHP))#turns into spatial object
-
 ```
 
 Now that the data is filtered correctly we can try to calculate these homeranges for our non-tournament fish. 
@@ -493,9 +543,9 @@ Now that the data is filtered correctly we can try to calculate these homeranges
 ### Minimum Convex Polygon
 For minimum convex polygon home-ranges the function will not run unless there are "5 relocations" so we need to make sure that we are only trying to fit this for fish with 5 or more locations. 
 ```{r}
-NT_HR = NT_HR %>% group_by(RewardTag1) %>% filter(n()>4)
+NT_HR = NT_HR %>% group_by(RewardTag1) %>% filter(n()>20)
 NT_HR = as(NT_HR, "Spatial")
-NT_mcp95 = mcp(NT_HR[,"RewardTag1"],percent = 50, unin="m", unout="m2")# is unit in correct?????
+NT_mcp95 = mcp(NT_HR[,"RewardTag1"],percent = 95, unin="m", unout="m2")# is unit in correct?????
 
 NT_mcp95
 ```
@@ -515,45 +565,8 @@ NT_KDE95 = st_as_sf(getverticeshr(KernelHrefEpa_NT, percent = 95))
 
 ```
 
-### Local Convex Hull
-
-### Brownian Bridge Home Range
-
-```{r}
-
-NT_HR_Traj = as.ltraj(xy=coordinates(NT_HR),date=as.POSIXct(NT_HR$Date),id=NT_HR$RewardTag1,typeII=T)#type II is asking whether the specific time is included (Ex. 12:15 PM, 1:00 AM, etc.)
-
-plot(NT_HR_Traj)
-
-```
-```{r}
-
-par(mar=c(.1,.1,.1,.1))#wont plot results unless I shrink margins. 
-sigma1 = liker(NT_HR_Traj, sig2=0, rangesig1 = c(0,10000))
-
-
-
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ## Alive vs Dead Movement
-
-# Model to Evaluate Loading of Fish Around CL
 
 ## Assigning lake sections
 
@@ -586,16 +599,154 @@ sigma1 = liker(NT_HR_Traj, sig2=0, rangesig1 = c(0,10000))
 
 
 
-
-
-
-
-
-
 ######################################################################################
 ######################################################################################
 ######################################################################################
 
+# Model to Evaluate Loading of Fish Around CL
+
+Here I am going to cleanup the data to help deal with the loading rate of fishes to Coosa Landing. To do so I need to summarize the tag-return data on a monthly basis. Additionally, we will have to account for non-reporting either due through angler non-reporting, tag loss, and fish that have already been caught that are UNABLE to be reported due to already having their tags removed by anglers. 
+
+```{r}
+
+tag_return = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TagReturnsMasterSheet.csv")
+
+```
+
+```{r}
+
+tourney_returns = filter(tag_return, If.released.it.was == "c")
+
+```
+
+Now we need to address the few random ones in the dataset such as UNK, "March", "2 weeks ago"
 
 
-TAGGING SIMULATION 
+
+##########################################
+##########################################
+##########################################
+
+Here is the actual model that we are going to use. 
+
+Is this simulating the overall tag returns or specifically fish caught in tournaments by period (month). 
+```{r}
+rm(list=ls(all=TRUE))
+set.seed(1)
+
+n_tag_1 = #number tagged per release event
+n_tag_2 = #release event 2
+n_tag_3 = #release event 3
+
+n_tag_hi_1 = 
+n_tag_med_1 = 
+n_tag_low_1 = 
+
+n_tag_hi_2 = 
+n_tag_med_2 =
+n_tag_low_2 =
+
+n_tag_hi_3 =
+n_tag_med_3 =
+n_tag_low_3 =
+
+
+n_rel=3# I assume 3 due to 3 tag release events? 
+n_yrs=#????
+
+u=runif(n_yrs,0.1,0.4)#random exploitation rate (do we know this)
+lambda=0.6#percent of low dollar tags that get reported?????
+cm=0.2#fish that die after fishing?
+TL=0.05#tag loss?
+
+S=matrix(NA,nrow=n_rel,ncol=n_yrs)#???
+
+p_ret_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+p_ret_med=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+p_ret_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+
+#Hi = 300, Med = 200, Low = 100 
+recaps_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+recaps_med=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+recaps_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+
+for (r in 1:n_rel){
+  for(y in r:n_yrs){
+    S[r,y]=(1-u[y])*(1-cm)
+    if(r==y){
+      p_ret_hi[r,y]=u[y]*(1-TL)
+      p_ret_low[r,y]=u[y]*(1-TL)*lambda
+    } else {
+      p_ret_hi[r,y]=u[y]*(1-TL)*prod(S[r,r:(y-1)])
+      p_ret_low[r,y]=u[y]*(1-TL)*lambda*prod(S[r,r:(y-1)])
+    }  # close if else
+    
+  }  #close y loop
+  p_ret_hi[r,n_yrs+1]=1-sum(p_ret_hi[r,])
+  p_ret_low[r,n_yrs+1]=1-sum(p_ret_low[r,])
+  recaps_hi[r,]=rmultinom(1,size=n_tag_hi,prob=p_ret_hi[r,])
+  recaps_low[r,]=rmultinom(1,size=n_tag_low,prob=p_ret_low[r,])
+}  #close r loop
+
+```
+
+
+############  estimation model  ###################
+
+
+```{r}
+
+nll=function(theta,recaps_hi,recaps_low,TL){
+  cm=plogis(theta[1])
+  lambda=plogis(theta[2])
+  u=plogis(theta[3:(n_yrs+2)])
+  S=matrix(NA,nrow=n_rel,ncol=n_yrs)
+  
+  p_ret_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+  p_ret_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+  
+  nll_hi=numeric(n_rel)
+  nll_low=numeric(n_rel)
+  
+  for (r in 1:n_rel){
+    for(y in r:n_yrs){
+      S[r,y]=(1-u[y])*(1-cm)
+      if(r==y){
+        p_ret_hi[r,y]=u[y]*(1-TL)
+        p_ret_low[r,y]=u[y]*(1-TL)*lambda
+      } else {
+        p_ret_hi[r,y]=u[y]*(1-TL)*prod(S[r,r:(y-1)])
+        p_ret_low[r,y]=u[y]*(1-TL)*lambda*prod(S[r,r:(y-1)])
+      }  # close if else
+      
+    }  #close y loop
+    p_ret_hi[r,n_yrs+1]=1-sum(p_ret_hi[r,])
+    p_ret_low[r,n_yrs+1]=1-sum(p_ret_low[r,])
+    nll_hi[r]=-dmultinom(recaps_hi[r,],prob=p_ret_hi[r,],log=T)
+    nll_low[r]=-dmultinom(recaps_low[r,],prob=p_ret_low[r,],log=T)
+  } #close r loop
+  sum(nll_hi)+sum(nll_low)
+}  #close function
+
+theta=qlogis(c(cm,lambda,u))
+
+nll(theta,recaps_hi,recaps_low,TL)
+
+
+fit=optim(theta,fn=nll,method='BFGS',hessian=T,recaps_hi=recaps_hi,recaps_low=recaps_low,TL=TL)
+
+plogis(fit$par)
+plogis(theta)
+
+se=sqrt(diag(solve(fit$hessian)))
+u95ci=plogis(fit$par+1.96*se)
+l95ci=plogis(fit$par-1.96*se)
+u95ci
+plogis(fit$par)
+l95ci
+
+
+nsamps=sum(recaps_hi)+sum(recaps_low)
+aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1)
+
+```
