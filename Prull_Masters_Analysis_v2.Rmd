@@ -72,13 +72,11 @@ The first double for-loop for these movements will be utilizing STRAIGHT LINE DI
 From here on out, NT = "NonTournament", T = "TournamentRelease", SL = "Straight-line distance", and LC = "Least-cost distance."
 
 ```{r}
-
 tag_nums = unique(NT_Manuals_All$RewardTag1)
 n_fish = length(tag_nums)# of individual fish making up dataset
 
 NT_Manuals_SL = numeric()
 NT_Manuals_days = numeric()#only need to calculate this one time... So, this vector will not be included in the second loop
-
 ```
 
 ### Straight-Line Distances
@@ -266,15 +264,6 @@ It appears that LMB tended to have a wider distribution of movement than ALB acr
 
 
 
-
-
-
-
-
-
-
-
-
 # Tournament Dispersal Analysis
 Now we want to look at tournament dispersal movement for fish displaced by tournament. To calculate their movement rates we will do a similar loop as before just with different data. The only difference being that there is no lag between the first and second location like there was for the Non-tournament fish. Thus, we only need individuals with 2 or more locations to create a meaningful movement value. 
 
@@ -349,7 +338,6 @@ T_Days_Step
 End = Sys.time()
 
 difftime(End,Start, units = "mins")
-
 ```
 
 Here I just add the data to the datafram via cbind which I will then work with later. 
@@ -455,7 +443,7 @@ h2 = hist(ALB_Transloc$T_Transloc_Dist_KM, breaks = c(seq(0,26,2)),col = "Blue")
 plot(h1, col = "Red", xlab = "KM Translocated by Angler",main=NULL)
 plot(h2, col = "Blue", add=T)
 legend(22,10,c("LMB", "ALB"), fill = c("Red","Blue"), title = "Species")
-
+#axis(1,h1$mids, labels = c("0-2", "2.1-4", "4.1,6","6.1,8", #"8.1-10","10.1-12","12.1-14","14.1-16","16.1-18","18.1-20","20.1-22","22.1-24","24.1-26"), tick = FALSE, padj=-1.5)
 ```
 
 ## Homing
@@ -522,59 +510,89 @@ Homing = Homing %>% group_by(RewardTag1) %>% slice(2:n())#Gets rid of double zer
 
 ggplot(data = Homing, aes(x = WeeksSinceRel, y = ProxMToLastKnownLocation/1000, group = RewardTag1,
                           color = as.factor(RewardTag1)))+
-  geom_line()
+  geom_line()+
+  geom_point(shape = factor(Homing$GroupMovement))
+#triangle = Dead.... Need to look at this panel by panel to look at potential homing.
 
+ggplot(data = Homing, aes(x = WeeksSinceRel, y = ProxMToLastKnownLocation/1000,
+                          color = as.factor(RewardTag1)))+
+  geom_line()+
+  geom_point(shape = factor(Homing$GroupMovement))+
+  facet_wrap(vars(RewardTag1))
 ```
-
-## Homerange Analysis MIGHT NOT BE POSSIBLE (TOO SMALL OF SAMPLE SIZES)
-
-For the homerange analysis we are going to calculate homeranges in a couple different ways. Most fisheries papers, however, use Kernel density homeranges. Some of these homeranges may not be able to be calculated due to low sample size but we will see. We don't want to include the tagging location in our homerange analysis. Therefore, we want 2:n() observations. Our data set will be defined as NT_HR (Non-tournament Homerange)
-
-```{r}
-NT_HR = subset(TrackMaster, GroupMovement == "A")#only alive fish
-NT_HR = subset(NT_HR, TournamentRelease != "Y")#only non-tournament fish
-NT_HR = subset(NT_HR, ManuallyTracked == "Y")#only fish that were manually tracked
-NT_HR = NT_HR %>% group_by(RewardTag1) %>% slice(2:n())#This gets rid of tagging location from data.
-NT_HR = sf::st_as_sf(NT_HR, coords=c("Long","Lat"),crs= crs(NeelySHP))#turns into spatial object
-```
-
-Now that the data is filtered correctly we can try to calculate these homeranges for our non-tournament fish. 
-
-### Minimum Convex Polygon
-For minimum convex polygon home-ranges the function will not run unless there are "5 relocations" so we need to make sure that we are only trying to fit this for fish with 5 or more locations. 
-```{r}
-NT_HR = NT_HR %>% group_by(RewardTag1) %>% filter(n()>20)
-NT_HR = as(NT_HR, "Spatial")
-NT_mcp95 = mcp(NT_HR[,"RewardTag1"],percent = 95, unin="m", unout="m2")# is unit in correct?????
-
-NT_mcp95
-```
-
-### Kernel Density NEED TO WORK ON THIS........
-```{r}
-
-KernelHrefEpa_NT = kernelUD(NT_HR[,"RewardTag1"], h="href", kern="epa",boundary = NeelySHP)
-
-image(KernelHrefEpa_NT)
-kernel.area(KernelHrefEpa_NT)#column is each fish
-
-
-plot(getverticeshr(KernelHrefEpa_NT))
-
-NT_KDE95 = st_as_sf(getverticeshr(KernelHrefEpa_NT, percent = 95))
-
-```
-
 
 ## Alive vs Dead Movement
 
+```{r}
+AliveDeadMovement = subset(TrackMaster,ManuallyTracked == "Y")
+AliveDeadMovement = AliveDeadMovement %>% group_by(RewardTag1) %>% filter(n()>1)
+```
+
+```{r}
+tag_nums = unique(AliveDeadMovement$RewardTag1)
+n_fish = length(tag_nums)# of individual fish making up dataset
+
+AliveDead_SL = numeric()
+AliveDead_weeks = numeric()#only need to calculate this one time... So, this vector will not be included in the second loop
+```
+
+```{r}
+#Outside loop that selects tag-number 
+for(i in 1:n_fish){
+  
+  new_tag = tag_nums[i]
+  new_dat = subset(AliveDeadMovement,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  AliveDead_Dist = numeric(tmax)
+  weeks = numeric(tmax)
+  
+  for(t in 2:tmax){
+    
+    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[t-1],new_dat$Lat[t-1]))#
+    AliveDead_Dist[t] = dist_m
+    weeks[t] = as.numeric(new_dat$Date[t]-new_dat$Date[t-1])/7
+  }
+  AliveDead_SL = append(AliveDead_SL,AliveDead_Dist)
+  AliveDead_weeks = append(AliveDead_weeks,weeks)
+}
+```
+
+cbinding the data to the dataframe
+```{r}
+AliveDeadMovement = cbind(AliveDeadMovement,AliveDead_SL)
+colnames(AliveDeadMovement)[27] <- "SL_Movement_M"
+
+AliveDeadMovement = cbind(AliveDeadMovement,AliveDead_weeks)
+colnames(AliveDeadMovement)[28] <- "WeeksFromLast"
+
+AliveDeadMovement$meters_per_week = AliveDeadMovement$SL_Movement_M/AliveDeadMovement$WeeksFromLast
+
+AliveDeadMovement = AliveDeadMovement %>% group_by(RewardTag1) %>% slice(2:n())
+```
+
+```{r}
+ggplot(AliveDeadMovement, aes(x=GroupMovement, y = meters_per_week))+
+  geom_boxplot()+
+  #scale_y_continuous(limits = c(0,200))+
+  theme_classic()
+```
+
 ## Assigning lake sections
+
+This should assign the SectionNum for each point in our dataset. 1 is closest to the dam, 6 is up the river section. 
+```{r}
+Sections = sf::st_as_sf(TrackMaster, coords = c("Long","Lat"),crs = crs(NeelySHP))
+
+SectionAssignment = st_join(Sections, NeelySections)
+```
+
+
 
 ## Tagging data to inform loading rate
 
 ## Average dispersal rates inform how quickly loaded fish move out of CL Zone
 
-## Percents of tagged fish in zone at any given time. 
+## Percents of tagged fish in zone at any given time.#Spatial Redistribution
 
 ```{r}
 #THIS IS HOW TO SAVE THE SPATIAL GEOMETRY BACK INTO A CSV. 
@@ -634,103 +652,132 @@ Is this simulating the overall tag returns or specifically fish caught in tourna
 rm(list=ls(all=TRUE))
 set.seed(1)
 
-n_tag_1 = #number tagged per release event
-n_tag_2 = #release event 2
-n_tag_3 = #release event 3
+n_tag_hi_sin = #c(Dec 2021, Dec2022, Jan2023, May 2023)
 
-n_tag_hi_1 = 
-n_tag_med_1 = 
-n_tag_low_1 = 
+n_tag_med_sin = 
+n_tag_med_doub = 
 
-n_tag_hi_2 = 
-n_tag_med_2 =
-n_tag_low_2 =
+n_tag_low_sin = 
+n_tag_low_doub = 
+  
 
-n_tag_hi_3 =
-n_tag_med_3 =
-n_tag_low_3 =
+n_rel=4# I assume 3 due to 3 tag release events? 
+n_yrs=#???? #monthly periods (number total). 
 
+S=matrix(NA,nrow=n_rel,ncol=n_yrs)#Survival???
 
-n_rel=3# I assume 3 due to 3 tag release events? 
-n_yrs=#????
-
-u=runif(n_yrs,0.1,0.4)#random exploitation rate (do we know this)
-lambda=0.6#percent of low dollar tags that get reported?????
-cm=0.2#fish that die after fishing?
-TL=0.05#tag loss?
-
-S=matrix(NA,nrow=n_rel,ncol=n_yrs)#???
-
+#PROB OF RETURN #DOUBLE THIS
 p_ret_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+
+
 p_ret_med=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+
+
 p_ret_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
 
-#Hi = 300, Med = 200, Low = 100 
+
+
+#Hi = 300, Med = 200, Low = 100 ACTUAL NUMBER DOUBLE THESE
 recaps_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+
+
 recaps_med=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+
+
 recaps_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
 
-for (r in 1:n_rel){
-  for(y in r:n_yrs){
-    S[r,y]=(1-u[y])*(1-cm)
-    if(r==y){
-      p_ret_hi[r,y]=u[y]*(1-TL)
-      p_ret_low[r,y]=u[y]*(1-TL)*lambda
-    } else {
-      p_ret_hi[r,y]=u[y]*(1-TL)*prod(S[r,r:(y-1)])
-      p_ret_low[r,y]=u[y]*(1-TL)*lambda*prod(S[r,r:(y-1)])
-    }  # close if else
-    
-  }  #close y loop
-  p_ret_hi[r,n_yrs+1]=1-sum(p_ret_hi[r,])
-  p_ret_low[r,n_yrs+1]=1-sum(p_ret_low[r,])
-  recaps_hi[r,]=rmultinom(1,size=n_tag_hi,prob=p_ret_hi[r,])
-  recaps_low[r,]=rmultinom(1,size=n_tag_low,prob=p_ret_low[r,])
-}  #close r loop
 
 ```
 
-
 ############  estimation model  ###################
-
 
 ```{r}
 
-nll=function(theta,recaps_hi,recaps_low,TL){
+nll=function(theta,recaps_hi_sing,recaps_med_sin,recaps_med_doub,recaps_low_sin,recaps_low_doub,TL){
   cm=plogis(theta[1])
-  lambda=plogis(theta[2])
-  u=plogis(theta[3:(n_yrs+2)])
+  
+  lambda=plogis(theta[2:3])
+  
+  u=plogis(theta[4:(n_yrs+3)])
   S=matrix(NA,nrow=n_rel,ncol=n_yrs)
   
-  p_ret_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-  p_ret_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+  p_ret_hi_sin=matrix(0,nrow=n_rel,ncol=n_yrs+1)
   
-  nll_hi=numeric(n_rel)
-  nll_low=numeric(n_rel)
+  p_ret_med_sin=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+  p_ret_med_doub=matrix(0,nrow=n_rel,ncol=n_yrs*2+1)
+  
+  p_ret_low_sin=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+  p_ret_low_doub=matrix(0,nrow=n_rel,ncol=n_yrs*2+1)
+  
+  nll_hi_sin=numeric(n_rel)#never double tagged $300 fish
+  
+  nll_med_sin=numeric(n_rel)
+  nll_med_doub=numeric(n_rel)
+  
+  nll_low_sin=numeric(n_rel)
+  nll_low_doub=numeric(n_rel)
+  
   
   for (r in 1:n_rel){
     for(y in r:n_yrs){
       S[r,y]=(1-u[y])*(1-cm)
       if(r==y){
-        p_ret_hi[r,y]=u[y]*(1-TL)
-        p_ret_low[r,y]=u[y]*(1-TL)*lambda
+        p_ret_hi_sin[r,y]=u[y]*(1-TL)
+        
+        p_ret_med_sin[r,y]=u[y]*(1-TL)*lambda[1]
+        p_ret_med_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[1]
+        p_ret_med_doub[r,y*2]=u[y]*(1-TL)^2*lambda[1]
+
+        
+        p_ret_low_sin[r,y]=u[y]*(1-TL)*lambda
+        p_ret_low_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[2]
+        p_ret_low_doub[r,y*2]=u[y]*(1-TL)^2*lambda[2]
+    
       } else {
-        p_ret_hi[r,y]=u[y]*(1-TL)*prod(S[r,r:(y-1)])
-        p_ret_low[r,y]=u[y]*(1-TL)*lambda*prod(S[r,r:(y-1)])
+        
+        p_ret_hi_sin[r,y]=u[y]*(1-TL)*prod(S[r,r:(y-1)])
+        
+        p_ret_med_sin[r,y]=u[y]*(1-TL)*lambda[1]*prod(S[r,r:(y-1)])
+        p_ret_med_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[1]*prod(S[r,r:(y-1)])
+        p_ret_med_doub[r,y*2]=u[y]*(1-TL)^2*lambda[1]*prod(S[r,r:(y-1)])
+
+        
+        p_ret_low_sin[r,y]=u[y]*(1-TL)*lambda*prod(S[r,r:(y-1)])
+        p_ret_low_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[2]*prod(S[r,r:(y-1)])
+        p_ret_low_doub[r,y*2]=u[y]*(1-TL)^2*lambda[2]*prod(S[r,r:(y-1)])
+        
       }  # close if else
       
     }  #close y loop
-    p_ret_hi[r,n_yrs+1]=1-sum(p_ret_hi[r,])
-    p_ret_low[r,n_yrs+1]=1-sum(p_ret_low[r,])
-    nll_hi[r]=-dmultinom(recaps_hi[r,],prob=p_ret_hi[r,],log=T)
-    nll_low[r]=-dmultinom(recaps_low[r,],prob=p_ret_low[r,],log=T)
+    p_ret_hi_sin[r,n_yrs+1]=1-sum(p_ret_hi[r,])
+    
+    p_ret_med_sin[r,n_yrs+1]=1-sum(p_ret_med_sin[r,])
+    p_ret_med_doub[r,n_yrs+1]=1-sum(p_ret_med_doub[r,])
+    
+    p_ret_low_sin[r,n_yrs+1]=1-sum(p_ret_low_sin[r,])
+    p_ret_low_doub[r,n_yrs+1]=1-sum(p_ret_low_doub[r,])
+
+    nll_hi_sin[r]=-dmultinom(recaps_hi_sin[r,],prob=p_ret_hi_sin[r,],log=T)
+    
+    nll_med_sin[r]=-dmultinom(recaps_med_doub[r,],prob=p_ret_med_doub[r,],log=T)
+    nll_med_doub[r]=-dmultinom(recaps_med_doub[r,],prob=p_ret_med_doub[r,],log=T)
+    
+    nll_low_sin[r]=-dmultinom(recaps_low_sin[r,],prob=p_ret_low_sin[r,],log=T)
+    nll_low_doub[r]=-dmultinom(recaps_low_doub[r,],prob=p_ret_low_doub[r,],log=T)
+
   } #close r loop
-  sum(nll_hi)+sum(nll_low)
+  sum(nll_hi_sin)+sum(nll_med_sin)+sum(nll_med_doub)+sum(nll_low_sin)+sum(nll_low_doub)
 }  #close function
 
-theta=qlogis(c(cm,lambda,u))
+theta=qlogis(c(.3,lambda = c(.9,.8),u = rep(0.1,n_yrs)))
 
-nll(theta,recaps_hi,recaps_low,TL)
+nll(theta,recaps_hi_sin,recaps_med_sin,recaps_med_doub,recaps_low_sin,recaps_low_doub)
+
+
+
+#####STOPPED HERE. 
+
+
 
 
 fit=optim(theta,fn=nll,method='BFGS',hessian=T,recaps_hi=recaps_hi,recaps_low=recaps_low,TL=TL)
