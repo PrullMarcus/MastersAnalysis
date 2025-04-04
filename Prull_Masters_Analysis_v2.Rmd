@@ -639,55 +639,90 @@ tourney_returns = filter(tag_return, If.released.it.was == "c")
 
 Now we need to address the few random ones in the dataset such as UNK, "March", "2 weeks ago"
 
-
-
 ##########################################
 ##########################################
 ##########################################
 
-Here is the actual model that we are going to use. 
 
-Is this simulating the overall tag returns or specifically fish caught in tournaments by period (month). 
+This code assigns the correct reward level to the fish that were returned by anglers. I will do the same for the tagging data.
+
 ```{r}
-rm(list=ls(all=TRUE))
-set.seed(1)
+TaggingMaster = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TaggingMasterSheet.csv")
+```
 
-n_tag_hi_sin = #c(Dec 2021, Dec2022, Jan2023, May 2023)
+```{r}
+TaggingMaster$Reward.Tag.. = as.numeric(TaggingMaster$Reward.Tag..)
 
-n_tag_med_sin = 
-n_tag_med_doub = 
+TaggingMaster = TaggingMaster %>% 
+            mutate(RewardLevel = case_when(
+              Reward.Tag.. <= 1000 | Reward.Tag.. >=4000 & Reward.Tag..<=4499 ~ "Low",
+              Reward.Tag.. >=1001 & Reward.Tag..<=2000 | Reward.Tag.. >=5000 & Reward.Tag..<=5249 ~ "Medium",
+              Reward.Tag.. >=2001 & Reward.Tag..<=2500 ~ "High"
+            ))
+TaggingMaster
+```
 
-n_tag_low_sin = 
-n_tag_low_doub = 
-  
+Combining the 2 together (single/double and the reward amount)
+```{r}
 
-n_rel=4# I assume 3 due to 3 tag release events? 
-n_yrs=#???? #monthly periods (number total). 
-
-S=matrix(NA,nrow=n_rel,ncol=n_yrs)#Survival???
-
-#PROB OF RETURN #DOUBLE THIS
-p_ret_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-
-
-p_ret_med=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-
-
-p_ret_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-
-
-
-#Hi = 300, Med = 200, Low = 100 ACTUAL NUMBER DOUBLE THESE
-recaps_hi=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-
-
-recaps_med=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-
-
-recaps_low=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-
+TaggingMaster = TaggingMaster %>% 
+              mutate(TaggingGroup = case_when(
+                RewardLevel =="Low" & Num.tagged == 1 ~ "LowSin",
+                RewardLevel == "Low" & Num.tagged == 2 ~ "LowDoub",
+                RewardLevel == "Medium" & Num.tagged == 1 ~"MediumSin",
+                RewardLevel == "Medium" & Num.tagged == 2 ~ "MediumDoub",
+                RewardLevel == "High" ~ "HighSin"
+              ))
 
 ```
+
+We need # tagged by period (Month/Year) separated by reward value and tagging status (single/double) 
+Currently the "Date" Column is not actually being stored as a data. Its being stored as a "chr". We are gonna use lubridate to make an actual date column. THEN, we need to make a "month/year which will set the basis of our matrix we want to create. 
+```{r}
+TaggingMaster$Date = as.Date(TaggingMaster$Date, format = "%m/%d/%y")
+TaggingMaster$MonthYear = format(TaggingMaster$Date, "%m-%Y")
+unique(TaggingMaster$MonthYear)
+```
+
+Creating the periods string (first tagging period till end of year 2023). 
+```{r} 
+Period_Seq = format(seq.Date(as.Date("2022-01-01"), as.Date("2023-12-01"), by = "month"),format = "%m-%Y")
+```
+
+Okay, we need first column is the tag type, second column is release period, second column is total tagged, and then every successive column is the recaps for each tagging period. 
+
+            Rel Period  #Tagged 12/23   1/24   2/24   3/24   4/24   
+100 Sing       1/22       10     0      0      0          
+100 Doub       1/22       20     0      0      0     
+200 Sing       1/22      ...    ...    ...    ... 
+200 Doub       1/22      ...    ...    ...    ...
+300 Sing       1/22      ...    ...    ...    ...
+100 Sing       2/22       20     0      0      0          
+100 Doub       2/22       35     0      0      0     
+200 Sing       2/22      ...    ...    ...    ... 
+200 Doub       2/22      ...    ...    ...    ...
+300 Sing       2/22      ...    ...    ...    ...
+
+```{r}
+test = TaggingMaster %>% group_by(MonthYear, TaggingGroup) %>% count(n())
+#test = tidyr::pivot_wider(test,names_from = MonthYear, values_from=n)
+test[is.na(test)]=0
+test
+```
+```{r}
+MonthYearOrder = c("01-2022", "02-2022", "12-2022","01-2023","05-2023")
+TagTypeOrder = c("LowSin","LowDoub","MediumSin","MediumDoub","HighSin")
+
+test$MonthYear = factor(test$MonthYear, levels = MonthYearOrder)
+
+test[with(test,order(factor(test$MonthYear, levels = MonthYearOrder),factor(test$TaggingGroup, levels = TagTypeOrder))),]
+```
+
+
+
+
+We may need to reorder it, but it looks like the above code calculated the correct number tagged for each tagging period and 
+tag type. Now, we need to add-in the sequence of recap periods and how many recaptures were made from these groups every period. Firstly, we need to somehow merge the recapture data with the tagging master. This will allow us to desginate the tagging type of each of the returned fish. Then we can use the call data to assign it a recap period. 
 
 ############  estimation model  ###################
 
