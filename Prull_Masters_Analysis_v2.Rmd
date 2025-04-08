@@ -715,14 +715,22 @@ TagTypeOrder = c("LowSin","LowDoub","MediumSin","MediumDoub","HighSin")
 
 test$MonthYear = factor(test$MonthYear, levels = MonthYearOrder)
 
-test[with(test,order(factor(test$MonthYear, levels = MonthYearOrder),factor(test$TaggingGroup, levels = TagTypeOrder))),]
+test = test[with(test,order(factor(test$MonthYear, levels = MonthYearOrder),factor(test$TaggingGroup, levels = TagTypeOrder))),]
 ```
 
+Here is adding a column for each monthly period. I just filled the value with NAs to start. Also, can get rid fo the third column...
+```{r}
+test[,Period_Seq] = NA
+test
+```
+Now we need to somehow figure out how to tell r where to assign all of our tag returns. We need to take the tag return data, assign every tag return to its proper release period, reward group, and capture month. Then have r take a tally of all the fish in each criteria/recap group. 
 
+This gets rid of the n() column which is just the total of all the tag types.  
+```{r}
+test = test[,!(names(test) %in% "n()")]
+test
+```
 
-
-We may need to reorder it, but it looks like the above code calculated the correct number tagged for each tagging period and 
-tag type. Now, we need to add-in the sequence of recap periods and how many recaptures were made from these groups every period. Firstly, we need to somehow merge the recapture data with the tagging master. This will allow us to desginate the tagging type of each of the returned fish. Then we can use the call data to assign it a recap period. 
 
 ############  estimation model  ###################
 
