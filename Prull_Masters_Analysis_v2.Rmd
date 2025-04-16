@@ -625,18 +625,6 @@ SectionAssignment = st_join(Sections, NeelySections)
 
 Here I am going to cleanup the data to help deal with the loading rate of fishes to Coosa Landing. To do so I need to summarize the tag-return data on a monthly basis. Additionally, we will have to account for non-reporting either due through angler non-reporting, tag loss, and fish that have already been caught that are UNABLE to be reported due to already having their tags removed by anglers. 
 
-```{r}
-
-tag_return = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TagReturnsMasterSheet.csv")
-
-```
-
-```{r}
-
-tourney_returns = filter(tag_return, If.released.it.was == "c")
-
-```
-
 Now we need to address the few random ones in the dataset such as UNK, "March", "2 weeks ago"
 
 ##########################################
@@ -655,29 +643,16 @@ TaggingMaster$Reward.Tag.. = as.numeric(TaggingMaster$Reward.Tag..)
 
 TaggingMaster = TaggingMaster %>% 
             mutate(RewardLevel = case_when(
-              Reward.Tag.. <= 1000 | Reward.Tag.. >=4000 & Reward.Tag..<=4499 ~ "Low",
-              Reward.Tag.. >=1001 & Reward.Tag..<=2000 | Reward.Tag.. >=5000 & Reward.Tag..<=5249 ~ "Medium",
-              Reward.Tag.. >=2001 & Reward.Tag..<=2500 ~ "High"
+              Reward.Tag.. <= 1000 | Reward.Tag.. >=4000 & Reward.Tag..<=4499 ~ 1,
+              Reward.Tag.. >=1001 & Reward.Tag..<=2000 | Reward.Tag.. >=5000 & Reward.Tag..<=5249 ~ 2,
+              Reward.Tag.. >=2001 & Reward.Tag..<=2500 ~ 3
             ))
 TaggingMaster
 ```
 
-Combining the 2 together (single/double and the reward amount)
-```{r}
-
-TaggingMaster = TaggingMaster %>% 
-              mutate(TaggingGroup = case_when(
-                RewardLevel =="Low" & Num.tagged == 1 ~ "LowSin",
-                RewardLevel == "Low" & Num.tagged == 2 ~ "LowDoub",
-                RewardLevel == "Medium" & Num.tagged == 1 ~"MediumSin",
-                RewardLevel == "Medium" & Num.tagged == 2 ~ "MediumDoub",
-                RewardLevel == "High" ~ "HighSin"
-              ))
-
-```
-
 We need # tagged by period (Month/Year) separated by reward value and tagging status (single/double) 
 Currently the "Date" Column is not actually being stored as a data. Its being stored as a "chr". We are gonna use lubridate to make an actual date column. THEN, we need to make a "month/year which will set the basis of our matrix we want to create. 
+
 ```{r}
 TaggingMaster$Date = as.Date(TaggingMaster$Date, format = "%m/%d/%y")
 TaggingMaster$MonthYear = format(TaggingMaster$Date, "%m-%Y")
@@ -691,36 +666,37 @@ Period_Seq = format(seq.Date(as.Date("2022-01-01"), as.Date("2023-12-01"), by = 
 
 Okay, we need first column is the tag type, second column is release period, second column is total tagged, and then every successive column is the recaps for each tagging period. 
 
-            Rel Period  #Tagged 12/23   1/24   2/24   3/24   4/24   
-100 Sing       1/22       10     0      0      0          
-100 Doub       1/22       20     0      0      0     
-200 Sing       1/22      ...    ...    ...    ... 
-200 Doub       1/22      ...    ...    ...    ...
-300 Sing       1/22      ...    ...    ...    ...
-100 Sing       2/22       20     0      0      0          
-100 Doub       2/22       35     0      0      0     
-200 Sing       2/22      ...    ...    ...    ... 
-200 Doub       2/22      ...    ...    ...    ...
-300 Sing       2/22      ...    ...    ...    ...
+Reward # Tag   RelPeriod  #Tagged 12/23   1/24   2/24   3/24   4/24   
+100    Sing       1/22       10     0      0      0          
+100    Doub       1/22       20     0      0      0     
+200    Sing       1/22      ...    ...    ...    ... 
+200    Doub       1/22      ...    ...    ...    ...
+300    Sing       1/22      ...    ...    ...    ...
+100    Sing       2/22       20     0      0      0          
+100    Doub       2/22       35     0      0      0     
+200    Sing       2/22      ...    ...    ...    ... 
+200    Doub       2/22      ...    ...    ...    ...
+300    Sing       2/22      ...    ...    ...    ...
 
 ```{r}
-test = TaggingMaster %>% group_by(MonthYear, TaggingGroup) %>% count(n())
+test = TaggingMaster %>% group_by(MonthYear, RewardLevel, Num.tagged) %>% count(n())
 #test = tidyr::pivot_wider(test,names_from = MonthYear, values_from=n)
 test[is.na(test)]=0
 test
 ```
+
+
 ```{r}
 MonthYearOrder = c("01-2022", "02-2022", "12-2022","01-2023","05-2023")
-TagTypeOrder = c("LowSin","LowDoub","MediumSin","MediumDoub","HighSin")
-
-test$MonthYear = factor(test$MonthYear, levels = MonthYearOrder)
-
-test = test[with(test,order(factor(test$MonthYear, levels = MonthYearOrder),factor(test$TaggingGroup, levels = TagTypeOrder))),]
+RewardLevOrder = c(1,2,3)
+SingleDoubleOrder = c(1,2)
 ```
 
-Here is adding a column for each monthly period. I just filled the value with NAs to start. Also, can get rid fo the third column...
 ```{r}
-test[,Period_Seq] = NA
+test$MonthYear = factor(test$MonthYear, levels = MonthYearOrder)
+
+test = test[with(test,order(factor(test$MonthYear, levels = MonthYearOrder),factor(test$RewardLevel, levels = RewardLevOrder),factor(test$Num.tagged, levels = SingleDoubleOrder))),]
+
 test
 ```
 Now we need to somehow figure out how to tell r where to assign all of our tag returns. We need to take the tag return data, assign every tag return to its proper release period, reward group, and capture month. Then have r take a tally of all the fish in each criteria/recap group. 
@@ -731,6 +707,93 @@ test = test[,!(names(test) %in% "n()")]
 test
 ```
 
+Firstly, I am going to take the tag recap matrix and make the capture date into a month/year format like we have in our matrix. Additionally, I am going to add its release period and TaggingGroup which we can figure out from the tagging data for that individual fish. 
+```{r}
+tag_return = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TagReturnsMasterSheet.csv")
+```
+
+```{r}
+tourney_returns = filter(tag_return, If.released.it.was == "c")
+tourney_returns
+```
+Selecting only variables I think we need for this. 
+
+```{r}
+tourney_returns = tourney_returns %>% dplyr::select(c("Tag.number","Second.Tag","Date.of.catch","Which.body.of.water",
+                                   "Access.to.the.lake","If.released.it.was"))
+tourney_returns
+```
+
+An easy thing to do first is to change the Date.of.catch part to MonthYear just like it is in the matrix we setup.
+```{r}
+tourney_returns$Date.of.catch = as.Date(tourney_returns$Date.of.catch, format = "%m/%d/%y")
+tourney_returns$RecapMonthYear = format(tourney_returns$Date, "%m-%Y")
+unique(tourney_returns$RecapMonthYear)
+tourney_returns
+```
+
+Now have the release date in the same format as the matrix. Now we need to add whether the fish was single/double tagged intitially. Then we need to combine the assigned reward to the fish as well as its release month. Then we should be able to populate the matrix correctly.  
+```{r}
+tmp1 <- merge(tourney_returns, TaggingMaster, by.x = "Tag.number", by.y = "Reward.Tag..", all.x = FALSE)
+tmp1 = tmp1 %>% dplyr::select(c("Tag.number","Second.Tag","Which.body.of.water",
+                                   "Access.to.the.lake", "MonthYear",
+                                   "RecapMonthYear","Num.tagged", "RewardLevel"))
+
+tmp2 <- merge(tourney_returns, TaggingMaster, by.x = "Tag.number", by.y = "X2nd.Reward.Tag..", all.x = FALSE)
+tmp2 = tmp2 %>% dplyr::select(c("Tag.number","Second.Tag","Which.body.of.water",
+                                   "Access.to.the.lake", "MonthYear",
+                                  "RecapMonthYear","Num.tagged", "RewardLevel"))
+
+tmp3 = rbind(tmp1,tmp2)
+tmp3
+```
+
+Missing two fish?????
+
+```{r}
+test2 = tmp3 %>% group_by(MonthYear, RewardLevel,Num.tagged, RecapMonthYear) %>% count(n())
+test2 = tidyr::pivot_wider(test2,names_from = RecapMonthYear, values_from=n)
+test2[is.na(test2)]=0
+test2
+```
+```{r}
+test2 = test2[,!(names(test2) %in% "n()")]
+test2
+```
+
+```{r}
+
+non_date_cols = c("MonthYear", "RewardLevel","Num.tagged")
+date_cols = setdiff(colnames(test2), non_date_cols)
+missing_months = setdiff(Period_Seq, date_cols)
+for(m in missing_months){
+  
+  test2[[m]]<-0
+  
+}
+
+test2 = test2[,c(non_date_cols, Period_Seq)]
+test2
+```
+
+
+Now I need to sort them properly (tag types in proper order and release periods in order)
+```{r}
+
+test2 = test2[with(test2,order(factor(test2$MonthYear, levels = MonthYearOrder),factor(test2$RewardLevel, levels = RewardLevOrder),factor(test2$Num.tagged, levels = SingleDoubleOrder))),]
+test2
+```
+
+I just simplified down the original test dataset to be merged with our recap matrix. 
+```{r}
+tests_merged = test %>% left_join(test2, by = c("MonthYear", "RewardLevel","Num.tagged"))
+tests_merged
+```
+Now I just need to replace the NAs with 0s 
+```{r}
+tests_merged = tests_merged %>% mutate(across(where(is.numeric),~replace_na(.,0)))
+tests_merged
+```
 
 ############  estimation model  ###################
 
@@ -824,6 +887,93 @@ nll(theta,recaps_hi_sin,recaps_med_sin,recaps_med_doub,recaps_low_sin,recaps_low
 
 
 fit=optim(theta,fn=nll,method='BFGS',hessian=T,recaps_hi=recaps_hi,recaps_low=recaps_low,TL=TL)
+
+plogis(fit$par)
+plogis(theta)
+
+se=sqrt(diag(solve(fit$hessian)))
+u95ci=plogis(fit$par+1.96*se)
+l95ci=plogis(fit$par-1.96*se)
+u95ci
+plogis(fit$par)
+l95ci
+
+
+nsamps=sum(recaps_hi)+sum(recaps_low)
+aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1)
+
+```
+
+```{r}
+
+```
+
+HERE IS THE MODEL WITHOUT DIFFERENCIATING BETWEEN TAG TYPES... 
+```{r}
+n_yrs = 24#number of recap periods. 2 calendar years with a montly timestep = 24 months.
+n_rel = nrow(tests_merged)#Do we need to change this to 5 if we aren't differenciating by tag-type within the model????
+TL = 0.05
+```
+
+```{r}
+tests_merged$NotSeen = tests_merged$n-apply(tests_merged[,5:27],1,sum)
+```
+
+```{r}
+
+my_released=my(tests_merged$MonthYear)#converts to date
+release_period=interval(my("1-2022"),my_released) %/% months(1)+1
+
+```
+estimate 4 cms, vector that is n_yrs long, 1, 2, 3, 4, 4 cms, 1 for each season. cm is all mortalities.
+
+
+```{r}
+
+nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
+ 
+  cm=plogis(theta[1])
+  
+  lambda=plogis(theta[2:3])
+  lambda=c(lambda,1)
+  
+  u=plogis(theta[4:(n_yrs+3)])
+  S=matrix(NA,nrow=n_rel,ncol=n_yrs)
+  
+  p_ret=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+  nll=numeric(n_rel)
+
+  for (r in 1:n_rel){
+    for(y in release_period[r]:n_yrs){
+      S[r,y]=(1-u[y])*(1-cm)
+      if(release_period[r]==y){
+        
+        p_ret[r,y]=u[y]*(1-TL^nTag[r])*lambda[RewardLevel[r]]
+        
+      } else {
+        
+        p_ret[r,y]=u[y]*(1-TL^nTag[r])*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
+        
+      }  # close if else
+      
+    }  #close y loop
+    
+    p_ret[r,n_yrs+1]=1-sum(p_ret[r,])
+    nll[r]=-dmultinom(recaps[r,],prob=p_ret[r,],log=T)
+    
+  } #close r loop
+  sum(nll)
+}  #close function
+
+theta=qlogis(c(.3,lambda = c(.8,.9),u = rep(0.1,n_yrs)))
+
+nll(theta,TL=TL,recaps = tests_merged[,5:29],nTag = tests_merged$Num.tagged, RewardLevel = tests_merged$RewardLevel,release_period=release_period)
+
+#####STOPPED HERE. 
+
+fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=nTag,RewardLevel=RewardLevel,release_period=release_period,recaps=recaps)
+
+
 
 plogis(fit$par)
 plogis(theta)
