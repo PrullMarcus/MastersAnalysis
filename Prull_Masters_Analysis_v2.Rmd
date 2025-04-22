@@ -10,7 +10,8 @@ Loading in required packages for analysis
 ```{r setup, include=FALSE}
 
 require(lubridate)#For making date column
-require(cowplot)#For any plot griding 
+require(cowplot)#For any plot griding and inseting (i.e. state of AL relative location)
+require(ggspatial)#For scale bar and compass for maps
 require(dplyr)#Filtering data
 require(ggplot2)#Making final plots
 require(geosphere)#package for straight line distance calculations
@@ -20,6 +21,8 @@ require(terra)#spatial analyst functions
 require(gdistance)#transition function package
 require(adehabitatHR)#Homerange functions
 require(adehabitatLT)#Need this for Brownian Bridge Movement Model
+require(FedData)#For state outlines
+require(tigris)#To retrieve AL outline from FedData
 ```
 
 First we need to read in my files from github. First file being read into R is the tracking data master sheet followed by my shapefile of Neely Henry which will be utilized later. Additionally, I load in the sections SHP file which will be used later on for the main model. 
@@ -586,10 +589,6 @@ Sections = sf::st_as_sf(TrackMaster, coords = c("Long","Lat"),crs = crs(NeelySHP
 SectionAssignment = st_join(Sections, NeelySections)
 ```
 
-
-
-## Tagging data to inform loading rate
-
 ## Average dispersal rates inform how quickly loaded fish move out of CL Zone
 
 ## Percents of tagged fish in zone at any given time.#Spatial Redistribution
@@ -797,120 +796,9 @@ tests_merged
 
 ############  estimation model  ###################
 
-```{r}
-
-nll=function(theta,recaps_hi_sing,recaps_med_sin,recaps_med_doub,recaps_low_sin,recaps_low_doub,TL){
-  cm=plogis(theta[1])
-  
-  lambda=plogis(theta[2:3])
-  
-  u=plogis(theta[4:(n_yrs+3)])
-  S=matrix(NA,nrow=n_rel,ncol=n_yrs)
-  
-  p_ret_hi_sin=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-  
-  p_ret_med_sin=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-  p_ret_med_doub=matrix(0,nrow=n_rel,ncol=n_yrs*2+1)
-  
-  p_ret_low_sin=matrix(0,nrow=n_rel,ncol=n_yrs+1)
-  p_ret_low_doub=matrix(0,nrow=n_rel,ncol=n_yrs*2+1)
-  
-  nll_hi_sin=numeric(n_rel)#never double tagged $300 fish
-  
-  nll_med_sin=numeric(n_rel)
-  nll_med_doub=numeric(n_rel)
-  
-  nll_low_sin=numeric(n_rel)
-  nll_low_doub=numeric(n_rel)
-  
-  
-  for (r in 1:n_rel){
-    for(y in r:n_yrs){
-      S[r,y]=(1-u[y])*(1-cm)
-      if(r==y){
-        p_ret_hi_sin[r,y]=u[y]*(1-TL)
-        
-        p_ret_med_sin[r,y]=u[y]*(1-TL)*lambda[1]
-        p_ret_med_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[1]
-        p_ret_med_doub[r,y*2]=u[y]*(1-TL)^2*lambda[1]
-
-        
-        p_ret_low_sin[r,y]=u[y]*(1-TL)*lambda
-        p_ret_low_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[2]
-        p_ret_low_doub[r,y*2]=u[y]*(1-TL)^2*lambda[2]
-    
-      } else {
-        
-        p_ret_hi_sin[r,y]=u[y]*(1-TL)*prod(S[r,r:(y-1)])
-        
-        p_ret_med_sin[r,y]=u[y]*(1-TL)*lambda[1]*prod(S[r,r:(y-1)])
-        p_ret_med_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[1]*prod(S[r,r:(y-1)])
-        p_ret_med_doub[r,y*2]=u[y]*(1-TL)^2*lambda[1]*prod(S[r,r:(y-1)])
-
-        
-        p_ret_low_sin[r,y]=u[y]*(1-TL)*lambda*prod(S[r,r:(y-1)])
-        p_ret_low_doub[r,y*2-1]=u[y]*2*TL*(1-TL)*lambda[2]*prod(S[r,r:(y-1)])
-        p_ret_low_doub[r,y*2]=u[y]*(1-TL)^2*lambda[2]*prod(S[r,r:(y-1)])
-        
-      }  # close if else
-      
-    }  #close y loop
-    p_ret_hi_sin[r,n_yrs+1]=1-sum(p_ret_hi[r,])
-    
-    p_ret_med_sin[r,n_yrs+1]=1-sum(p_ret_med_sin[r,])
-    p_ret_med_doub[r,n_yrs+1]=1-sum(p_ret_med_doub[r,])
-    
-    p_ret_low_sin[r,n_yrs+1]=1-sum(p_ret_low_sin[r,])
-    p_ret_low_doub[r,n_yrs+1]=1-sum(p_ret_low_doub[r,])
-
-    nll_hi_sin[r]=-dmultinom(recaps_hi_sin[r,],prob=p_ret_hi_sin[r,],log=T)
-    
-    nll_med_sin[r]=-dmultinom(recaps_med_doub[r,],prob=p_ret_med_doub[r,],log=T)
-    nll_med_doub[r]=-dmultinom(recaps_med_doub[r,],prob=p_ret_med_doub[r,],log=T)
-    
-    nll_low_sin[r]=-dmultinom(recaps_low_sin[r,],prob=p_ret_low_sin[r,],log=T)
-    nll_low_doub[r]=-dmultinom(recaps_low_doub[r,],prob=p_ret_low_doub[r,],log=T)
-
-  } #close r loop
-  sum(nll_hi_sin)+sum(nll_med_sin)+sum(nll_med_doub)+sum(nll_low_sin)+sum(nll_low_doub)
-}  #close function
-
-theta=qlogis(c(.3,lambda = c(.9,.8),u = rep(0.1,n_yrs)))
-
-nll(theta,recaps_hi_sin,recaps_med_sin,recaps_med_doub,recaps_low_sin,recaps_low_doub)
-
-
-
-#####STOPPED HERE. 
-
-
-
-
-fit=optim(theta,fn=nll,method='BFGS',hessian=T,recaps_hi=recaps_hi,recaps_low=recaps_low,TL=TL)
-
-plogis(fit$par)
-plogis(theta)
-
-se=sqrt(diag(solve(fit$hessian)))
-u95ci=plogis(fit$par+1.96*se)
-l95ci=plogis(fit$par-1.96*se)
-u95ci
-plogis(fit$par)
-l95ci
-
-
-nsamps=sum(recaps_hi)+sum(recaps_low)
-aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1)
-
-```
-
-```{r}
-
-```
-
 HERE IS THE MODEL WITHOUT DIFFERENCIATING BETWEEN TAG TYPES... 
 ```{r}
-n_yrs = 24#number of recap periods. 2 calendar years with a montly timestep = 24 months.
+n_mon = 24#number of recap periods. 2 calendar years with a montly timestep = 24 months.
 n_rel = nrow(tests_merged)#Do we need to change this to 5 if we aren't differenciating by tag-type within the model????
 TL = 0.05
 ```
@@ -925,8 +813,7 @@ my_released=my(tests_merged$MonthYear)#converts to date
 release_period=interval(my("1-2022"),my_released) %/% months(1)+1
 
 ```
-estimate 4 cms, vector that is n_yrs long, 1, 2, 3, 4, 4 cms, 1 for each season. cm is all mortalities.
-
+estimate 4 cms, vector that is n_mon long, 1, 2, 3, 4, 4 cms, 1 for each season. cm is all mortalities
 
 ```{r}
 
@@ -937,14 +824,14 @@ nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
   lambda=plogis(theta[2:3])
   lambda=c(lambda,1)
   
-  u=plogis(theta[4:(n_yrs+3)])
-  S=matrix(NA,nrow=n_rel,ncol=n_yrs)
+  u=plogis(theta[4:(n_mon+3)])
+  S=matrix(NA,nrow=n_rel,ncol=n_mon)
   
-  p_ret=matrix(0,nrow=n_rel,ncol=n_yrs+1)
+  p_ret=matrix(0,nrow=n_rel,ncol=n_mon+1)
   nll=numeric(n_rel)
 
   for (r in 1:n_rel){
-    for(y in release_period[r]:n_yrs){
+    for(y in release_period[r]:n_mon){
       S[r,y]=(1-u[y])*(1-cm)
       if(release_period[r]==y){
         
@@ -958,22 +845,18 @@ nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
       
     }  #close y loop
     
-    p_ret[r,n_yrs+1]=1-sum(p_ret[r,])
+    p_ret[r,n_mon+1]=1-sum(p_ret[r,])
     nll[r]=-dmultinom(recaps[r,],prob=p_ret[r,],log=T)
     
   } #close r loop
   sum(nll)
 }  #close function
 
-theta=qlogis(c(.3,lambda = c(.8,.9),u = rep(0.1,n_yrs)))
+theta=qlogis(c(.3,lambda = c(.8,.9),u = rep(0.1,n_mon)))
 
 nll(theta,TL=TL,recaps = tests_merged[,5:29],nTag = tests_merged$Num.tagged, RewardLevel = tests_merged$RewardLevel,release_period=release_period)
 
-#####STOPPED HERE. 
-
 fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=nTag,RewardLevel=RewardLevel,release_period=release_period,recaps=recaps)
-
-
 
 plogis(fit$par)
 plogis(theta)
@@ -985,8 +868,192 @@ u95ci
 plogis(fit$par)
 l95ci
 
+nsamps=sum(recaps_hi)+sum(recaps_low)
+aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1)
+
+```
+
+```{r}
+n_mon = 24#number of recap periods. 2 calendar years with a montly timestep = 24 months.
+n_rel = nrow(tests_merged)#Do we need to change this to 5 if we aren't differenciating by tag-type within the model????
+TL = 0.05
+```
+
+```{r}
+tests_merged$NotSeen = tests_merged$n-apply(tests_merged[,5:27],1,sum)
+```
+
+```{r}
+
+my_released=my(tests_merged$MonthYear)#converts to date
+release_period=interval(my("1-2022"),my_released) %/% months(1)+1
+
+```
+estimate 4 cms, vector that is n_mon long, 1, 2, 3, 4, 4 cms, 1 for each season. cm is all mortalities
+
+```{r}
+
+nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
+ 
+  cm=plogis(theta[1:4])
+  
+  lambda=plogis(theta[5:6])
+  lambda=c(lambda,1)
+  
+  u=plogis(theta[7:(n_mon+6)])
+  S=matrix(NA,nrow=n_rel,ncol=n_mon)
+  
+  p_ret=matrix(0,nrow=n_rel,ncol=n_mon+1)
+  nll=numeric(n_rel)
+
+  for (r in 1:n_rel){
+    for(y in release_period[r]:n_mon){
+      
+      if (y %in% c(1:2,12:14,24)) {
+        season = 1 #winter
+      } else if (y %in% c(3:5, 15:17)) {
+        season = 2 #spring
+      } else if (y %in% c(6:8,18:20)) {
+        season = 3 #summer
+      } else {
+        season = 4 #fall
+      }
+      
+      cm_season = cm[season]
+      
+      S[r,y]=(1-u[y])*(1-cm_season)
+      
+      if(release_period[r]==y){
+        
+        p_ret[r,y]=u[y]*(1-TL^nTag[r])*lambda[RewardLevel[r]]
+        
+      } else {
+        
+        p_ret[r,y]=u[y]*(1-TL^nTag[r])*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
+        
+      }  # close if else
+      
+    }  #close y loop
+    
+    p_ret[r,n_mon+1]=1-sum(p_ret[r,])
+    nll[r]=-dmultinom(recaps[r,],prob=p_ret[r,],log=T)
+    
+  } #close r loop
+  sum(nll)
+}  #close function
+
+theta=qlogis(c(rep(0.3,4),lambda = c(.8,.9),u = rep(0.1,n_mon)))
+
+nll(theta,TL=TL,recaps = tests_merged[,5:29],nTag = tests_merged$Num.tagged, RewardLevel = tests_merged$RewardLevel,release_period=release_period)
+
+fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=nTag,RewardLevel=RewardLevel,release_period=release_period,recaps=recaps)
+
+plogis(fit$par)
+plogis(theta)
+
+se=sqrt(diag(solve(fit$hessian)))
+u95ci=plogis(fit$par+1.96*se)
+l95ci=plogis(fit$par-1.96*se)
+u95ci
+plogis(fit$par)
+l95ci
 
 nsamps=sum(recaps_hi)+sum(recaps_low)
 aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1)
 
 ```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Maps
+
+
+
+
+## Study Area
+
+### Obtaining AL state outline
+
+```{r}
+
+alabama = tigris::states() %>% 
+  filter(NAME=='Alabama')
+
+plot(st_geometry(alabama))
+
+st_crs(alabama)$proj4string
+
+alabama = st_transform(alabama, st_crs(NeelySHP))
+
+studyArea = st_bbox(NeelySHP)
+studyArea
+
+studyArea = st_as_sfc(studyArea)
+
+plot(st_geometry(alabama))
+plot(studyArea, col='red', add=T)
+
+zoomedOut = ggplot()+
+  geom_sf(data = alabama)+
+  geom_sf(data = studyArea, fill=NA, color='red')
+
+zoomedOut = zoomedOut +
+  theme_bw()+ #Gets rid of most of the colors
+  theme(panel.grid=element_blank(), #Removes the gridlines
+        axis.text=element_blank(), #Removes the axis text
+        axis.ticks=element_blank(), #Removes the axis tick marks
+        panel.border=element_blank()) #Removes the frame around the graph
+zoomedOut
+
+```
+
+```{r}
+
+NeelyPlot = ggplot() + 
+  geom_sf(data = NeelySHP, fill = "lightblue", color = "black") +
+  theme_void()+
+  annotation_scale(location="br", style = "ticks", width_hint = 0.3)+
+  annotation_north_arrow(location = "tl", which_north="true",
+                         height = unit(0.8,"cm"),
+                         width = unit(0.8,"cm"))
+
+bbox_studyarea = st_bbox(NeelySHP)
+
+NeelyMap = ggdraw()+
+          draw_plot(NeelyPlot)+
+          draw_plot(zoomedOut, x = 0.22, y = 0.81, width = 0.2, height = 0.2)+
+          theme(panel.border = element_rect(color="black",size=1,fill=NA))+
+NeelyMap
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
