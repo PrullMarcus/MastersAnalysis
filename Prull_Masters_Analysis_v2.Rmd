@@ -755,6 +755,7 @@ test2 = tidyr::pivot_wider(test2,names_from = RecapMonthYear, values_from=n)
 test2[is.na(test2)]=0
 test2
 ```
+
 ```{r}
 test2 = test2[,!(names(test2) %in% "n()")]
 test2
@@ -797,81 +798,6 @@ tests_merged
 ############  estimation model  ###################
 
 HERE IS THE MODEL WITHOUT DIFFERENCIATING BETWEEN TAG TYPES... 
-```{r}
-n_mon = 24#number of recap periods. 2 calendar years with a montly timestep = 24 months.
-n_rel = nrow(tests_merged)#Do we need to change this to 5 if we aren't differenciating by tag-type within the model????
-TL = 0.05
-```
-
-```{r}
-tests_merged$NotSeen = tests_merged$n-apply(tests_merged[,5:27],1,sum)
-```
-
-```{r}
-
-my_released=my(tests_merged$MonthYear)#converts to date
-release_period=interval(my("1-2022"),my_released) %/% months(1)+1
-
-```
-estimate 4 cms, vector that is n_mon long, 1, 2, 3, 4, 4 cms, 1 for each season. cm is all mortalities
-
-```{r}
-
-nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
- 
-  cm=plogis(theta[1])
-  
-  lambda=plogis(theta[2:3])
-  lambda=c(lambda,1)
-  
-  u=plogis(theta[4:(n_mon+3)])
-  S=matrix(NA,nrow=n_rel,ncol=n_mon)
-  
-  p_ret=matrix(0,nrow=n_rel,ncol=n_mon+1)
-  nll=numeric(n_rel)
-
-  for (r in 1:n_rel){
-    for(y in release_period[r]:n_mon){
-      S[r,y]=(1-u[y])*(1-cm)
-      if(release_period[r]==y){
-        
-        p_ret[r,y]=u[y]*(1-TL^nTag[r])*lambda[RewardLevel[r]]
-        
-      } else {
-        
-        p_ret[r,y]=u[y]*(1-TL^nTag[r])*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
-        
-      }  # close if else
-      
-    }  #close y loop
-    
-    p_ret[r,n_mon+1]=1-sum(p_ret[r,])
-    nll[r]=-dmultinom(recaps[r,],prob=p_ret[r,],log=T)
-    
-  } #close r loop
-  sum(nll)
-}  #close function
-
-theta=qlogis(c(.3,lambda = c(.8,.9),u = rep(0.1,n_mon)))
-
-nll(theta,TL=TL,recaps = tests_merged[,5:29],nTag = tests_merged$Num.tagged, RewardLevel = tests_merged$RewardLevel,release_period=release_period)
-
-fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=nTag,RewardLevel=RewardLevel,release_period=release_period,recaps=recaps)
-
-plogis(fit$par)
-plogis(theta)
-
-se=sqrt(diag(solve(fit$hessian)))
-u95ci=plogis(fit$par+1.96*se)
-l95ci=plogis(fit$par-1.96*se)
-u95ci
-plogis(fit$par)
-l95ci
-
-nsamps=sum(recaps_hi)+sum(recaps_low)
-aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1)
-
-```
 
 ```{r}
 n_mon = 24#number of recap periods. 2 calendar years with a montly timestep = 24 months.
@@ -889,18 +815,30 @@ my_released=my(tests_merged$MonthYear)#converts to date
 release_period=interval(my("1-2022"),my_released) %/% months(1)+1
 
 ```
-estimate 4 cms, vector that is n_mon long, 1, 2, 3, 4, 4 cms, 1 for each season. cm is all mortalities
 
 ```{r}
 
+u_index = numeric()
+winter_group = c(1,2,12,13,14,24)#what n_mon periods coorespond to the winter months (dec, jan, feb). 
+u_counter = 2
+
+for(i in 1:24) {
+  if (i %in% winter_group) {
+    u_index[i] = 1
+  } else {
+    u_index[i] = u_counter
+    u_counter = u_counter +1
+  }
+}
+
 nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
- 
+
   cm=plogis(theta[1:4])
   
   lambda=plogis(theta[5:6])
   lambda=c(lambda,1)
   
-  u=plogis(theta[7:(n_mon+6)])
+  u_param=plogis(theta[7:(6+19)])#should be 19 of these (dec, jan, feb lumped into 1 u, separate for every other month)
   S=matrix(NA,nrow=n_rel,ncol=n_mon)
   
   p_ret=matrix(0,nrow=n_rel,ncol=n_mon+1)
@@ -919,7 +857,9 @@ nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
         season = 4 #fall
       }
       
-      cm_season = cm[season]
+      u[y] = u_param[u_index[y]]#this selects the grouped or individual u (winter or not).
+      
+      cm_season = cm[season]#uses the season (theta value) that corresponds to the necessary season
       
       S[r,y]=(1-u[y])*(1-cm_season)
       
@@ -942,11 +882,12 @@ nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
   sum(nll)
 }  #close function
 
-theta=qlogis(c(rep(0.3,4),lambda = c(.8,.9),u = rep(0.1,n_mon)))
+theta=c(qlogis(rep(0.3,4)),lambda=qlogis(c(.8,.9)), u = qlogis(rep(0.1,19)))
 
 nll(theta,TL=TL,recaps = tests_merged[,5:29],nTag = tests_merged$Num.tagged, RewardLevel = tests_merged$RewardLevel,release_period=release_period)
 
-fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=nTag,RewardLevel=RewardLevel,release_period=release_period,recaps=recaps)
+fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=tests_merged$Num.tagged, RewardLevel=tests_merged$RewardLevel,release_period=release_period,recaps=tests_merged[,5:29],
+          control = list(trace=1,maxit = 200))
 
 plogis(fit$par)
 plogis(theta)
@@ -962,18 +903,6 @@ nsamps=sum(recaps_hi)+sum(recaps_low)
 aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1)
 
 ```
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
