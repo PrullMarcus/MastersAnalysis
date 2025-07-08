@@ -57,73 +57,10 @@ TrackMaster
 
 First, we will look at manual tracking movements. There is an indicator column ("ManuallyTracked") that indicates whether we manually tracked a fish or not. For every fish the first location is the tagging location, followed by each subsequent location, therefore we need fish with >2 observations. 
 ```{r}
-Manuals = TrackMaster[TrackMaster$ManuallyTracked=="Y",]
-Manuals = Manuals %>% group_by(RewardTag1) %>% filter (n()>2)
-```
-
-To get just non-tournament individuals we can filter the data further using the indicator column of "TournamentRelease." We need to remove all the locations that have a "Y" associated with them. We also need to make sure that because we excluded some locations, we still have 3+ observations of each fish. (2 observations AFTER its tagging location). 
-```{r}
-NT_Manuals_All = subset(Manuals, TournamentRelease != "Y")
-NT_Manuals_All = NT_Manuals_All %>% group_by(RewardTag1) %>% filter (n()>2)
-```
-
-Here I setup vectors to be used by the loop to ensure that it loops over each tag number independently of one another. Additionally, I setup the empty containers for the results of the loops to go into. One container is the raw distance values between successive locations and the second container is the days elapsed between successive observed locations. 
-
-The first double for-loop for these movements will be utilizing STRAIGHT LINE DISTANCE since it runs in only a few seconds and makes it easier to diagnose errors in the code. Later, we will run LEAST COST DISTANCE, which plots the shortest route between points while making sure the distance calculation is bounded by the lake. THe least cost distance code, however, takes much much longer to run (hours). 
-
-From here on out, NT = "NonTournament", T = "TournamentRelease", SL = "Straight-line distance", and LC = "Least-cost distance."
-
-```{r}
-tag_nums = unique(NT_Manuals_All$RewardTag1)
-n_fish = length(tag_nums)# of individual fish making up dataset
-
-NT_Manuals_SL = numeric()
-NT_Manuals_days = numeric()#only need to calculate this one time... So, this vector will not be included in the second loop
-```
-
-### Straight-Line Distances
-
-First we will setup the loop to calculate STRAIGHT LINE DISTANCE between successive locations for my control individuals. 
-
-```{r}
-#Outside loop that selects tag-number 
-for(i in 1:n_fish){
-  
-  new_tag = tag_nums[i]
-  new_dat = subset(NT_Manuals_All,RewardTag1 == new_tag)
-  tmax = nrow(new_dat)
-  NT_Manuals_Dist = numeric(tmax)
-  days = numeric(tmax)
-  
-  for(t in 2:tmax){
-    
-    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[t-1],new_dat$Lat[t-1]))#
-    NT_Manuals_Dist[t] = dist_m
-    days[t] = as.numeric(new_dat$Date[t]-new_dat$Date[t-1])
-  }
-  NT_Manuals_SL = append(NT_Manuals_SL,NT_Manuals_Dist)
-  NT_Manuals_days = append(NT_Manuals_days,days)
-}
-
-```
-
-Here we just combine the output from the loop to the original dataset. 
-```{r}
-NT_Manuals_All = cbind(NT_Manuals_SL, NT_Manuals_All)
-colnames(NT_Manuals_All)[1]<-"SL_M" #straight line_meters
-
-NT_Manuals_All = cbind(NT_Manuals_days,NT_Manuals_All)
-colnames(NT_Manuals_All)[1]<-"DaysFromLastLoc"
-
-NT_Manuals_All
-```
-Now, because the first location is the original tagging location, the distance from the first to second record is essentially negligible. We didn't start tracking till almost 3 ish months after tagging. Therefore, the days elapsed and distance values from the first two rows for EACH fish is essentially negligible. Here I filter the data down to reflect that. 
-
-Additionally, I add the movement rates as a new column to the data
-
-```{r}
-NT_Manuals_All$SL_M_D = NT_Manuals_All$SL_M/NT_Manuals_All$DaysFromLastLoc#Straight-line meters per day moved
-NT_Manuals_All$SL_M_W = NT_Manuals_All$SL_M/(NT_Manuals_All$DaysFromLastLoc/7)#Straight-line Meters per week moved
+NT_Manuals = TrackMaster[TrackMaster$ManuallyTracked=="Y",]
+NT_Manuals = NT_Manuals[NT_Manuals$TournamentRelease != "Y",]
+NT_Manuals = NT_Manuals[NT_Manuals$GroupMovement == "A",]
+NT_Manuals = NT_Manuals %>% group_by(RewardTag1) %>% filter (n()>2)
 ```
 
 ### Least-cost (in-lake) distances
@@ -148,7 +85,6 @@ Looks correct. The pixels with a value of "1" are Water and "100" is land. It do
 
 Now, we have to convert this raster that we created into a different format which is used by the least-cost distance function. This will take a little bit of time to run. 
 ```{r}
-
 NeelyRast = raster(NeelyRast)#Converts spatraster to "raster" which is a different form of raster that the transition function needs in order to work properly. 
 
 NeelyTrans = transition(1/NeelyRast, transitionFunction = mean, directions = 8)
@@ -158,38 +94,39 @@ NeelyTrans = geoCorrection(NeelyTrans, type = 'c', multpl=F)
 
 NeelyTransRast = raster(NeelyTrans)
 plot(NeelyTransRast)
-
 ```
 
 Before we run the least-cost distance loop we need to create a spatial object (points) from the lat/long columns from our control fish dataframe. The least cost function requires a spatial object as input into the calculation that has the same coordinate reference system as the Neely Shapefile. 
 
-
 Here we convert our dataset to a spatial object.
 ```{r}
-NT_Manuals_All = sf::st_as_sf(NT_Manuals_All, coords = c("Long","Lat"),crs = crs(NeelySHP))
+NT_Manuals = sf::st_as_sf(NT_Manuals, coords = c("Long","Lat"),crs = crs(NeelySHP))
 ```
 
 Plotting of the data to make sure they show up together.
 ```{r}
 plot(NeelyTransRast)
-plot(NT_Manuals_All,add=T)
+plot(NT_Manuals,add=T)
 ```
 
 Here we do the same thing as before. The only thing that changes is the outputs are saved under a different name(LC = least cost) whereas before it was SL (straight-line). Additionally, the "distm" function is now changed to costDistance from the gdistance package in order to do least-cost distances (within lake distances). 
 ```{r}
 Start = Sys.time()
 
-tag_nums = unique(NT_Manuals_All$RewardTag1)#unique tag numbers
+tag_nums = unique(NT_Manuals$RewardTag1)#unique tag numbers
 n_fish = length(tag_nums)#number of fish
 
 NT_Manuals_LC = numeric()
+NT_Manuals_days = numeric()
+
 
 for(i in 1:n_fish){
   
   new_tag = tag_nums[i]
-  new_dat = subset(NT_Manuals_All,RewardTag1 == new_tag)
+  new_dat = subset(NT_Manuals,RewardTag1 == new_tag)
   tmax = nrow(new_dat)
   NT_Manuals_Dist = numeric(tmax)
+  days = numeric(tmax)
   
   for(t in 2:tmax){
     
@@ -197,10 +134,15 @@ for(i in 1:n_fish){
                                                   toCoords = sf::st_coordinates(new_dat[t,]))
     NT_Manuals_Dist[t] = dist_m
     
+    days[t] = as.numeric(new_dat$Date[t]-new_dat$Date[t-1])
+    
   }
   NT_Manuals_LC = append(NT_Manuals_LC,NT_Manuals_Dist)
+  NT_Manuals_days = append(NT_Manuals_days,days)
+
 }
 NT_Manuals_LC
+NT_Manuals_days
 
 End = Sys.time()
 difftime(End,Start, units = "mins")
@@ -208,22 +150,12 @@ difftime(End,Start, units = "mins")
 
 Adding the output to our dataset and calculating movement speeds just as we did before.
 ```{r}
-
-NT_Manuals_All = cbind(NT_Manuals_All,NT_Manuals_LC)
-colnames(NT_Manuals_All)[colnames(NT_Manuals_All) == "NT_Manuals_LC"] <- "LC_M"#renaming column to match Straight-line column name. 
-NT_Manuals_All$LC_M_D = NT_Manuals_All$LC_M/NT_Manuals_All$DaysFromLastLoc
-NT_Manuals_All$LC_M_W = NT_Manuals_All$LC_M/(NT_Manuals_All$DaysFromLastLoc/7)
-
-```
-
-
-Just a raw plot to show differences in SL vs LC movement rates. Appears to be an outlier that needs to be addressed. 
-```{r}
-plot(NT_Manuals_All$LC_M_W~NT_Manuals_All$SL_M_W,ylim=c(0,15000),xlim=c(0,15000))
-abline(a=0,b=1)
-
-plot(NT_Manuals_All$LC_M_W~NT_Manuals_All$SL_M_W,ylim=c(0,5000),xlim=c(0,5000))
-abline(a=0,b=1)
+NT_Manuals = cbind(NT_Manuals_days,NT_Manuals)
+colnames(NT_Manuals)[1]<-"DaysFromLastLoc"
+NT_Manuals = cbind(NT_Manuals_LC,NT_Manuals)
+colnames(NT_Manuals)[colnames(NT_Manuals) == "NT_Manuals_LC"] <- "LC_M"#renaming column to match Straight-line column name. 
+NT_Manuals$LC_M_D = NT_Manuals$LC_M/NT_Manuals$DaysFromLastLoc
+NT_Manuals$LC_M_W = NT_Manuals$LC_M/(NT_Manuals$DaysFromLastLoc/7)
 ```
 
 ## Movement Rates by species
@@ -234,15 +166,18 @@ Here is a graph showing the differences in movement distribution by time. The x 
 To do this we first need to separate out fish that are alive. Additionally we need to get rid of their first two observations. The first observation is the tagging location and then there is a long time gap between that location and their first tracking location. 
 
 ```{r}
-NT_Manuals_Alives = subset(NT_Manuals_All, GroupMovement == "A")
-NT_Manuals_Alives$MonthYear = strftime(NT_Manuals_Alives$Date, format = "%Y-%m")
-NT_Manuals_Alives = NT_Manuals_Alives %>% group_by(RewardTag1) %>% filter (n()>2)#making sure we have 3 alive locations... (we need this before but it included dead coding locations as well). 
-NT_Manuals_Alives = NT_Manuals_Alives %>% group_by(RewardTag1) %>% slice(3:n())
+NT_Manuals$MonthYear = strftime(NT_Manuals$Date, format = "%Y-%m")
+NT_Manuals = NT_Manuals %>% group_by(RewardTag1) %>% slice(3:n())
+```
+
+Filtering down to data I TOOK (2023 and on). 
+```{r}
+NT_Manuals = filter(NT_Manuals, Year %in% c(2023, 2024))
 ```
 
 ```{r}
 #Boxplot comparing species movement over months. 
-ggplot(NT_Manuals_Alives,aes(as.factor(MonthYear),SL_M_D))+
+ggplot(NT_Manuals,aes(as.factor(MonthYear),LC_M_W))+
       geom_boxplot(aes(fill=Species))+
       coord_cartesian(ylim=c(0,1600))+
       theme_classic(base_size=12)+
@@ -251,21 +186,34 @@ ggplot(NT_Manuals_Alives,aes(as.factor(MonthYear),SL_M_D))+
 ```
 Obviously this is hard to look at as there are many outliers across most of the months. Here I shrink down the plot and remove outliers to get a better look at what is going on with our movement across months.
 
-Trying something to get the year and month to not overlap each other (Separate tracking data by calendar year???)
-
 3 panels (2022, 2023, 2024)
 
 ```{r}
-ggplot(NT_Manuals_Alives,aes(as.factor(MonthYear),SL_M_D))+
+
+SeasonalPlot = ggplot(NT_Manuals,aes(x = MonthYear,y = LC_M_W))+
       geom_boxplot(aes(fill=Species),outlier.color=NA)+
-      coord_cartesian(ylim=c(0,250))+
+      coord_cartesian(ylim=c(0,1500))+
       theme_classic(base_size=12)+
       scale_y_continuous(expand=c(0.013,0))+
-      labs(x="Month-Year",y="Movement Speed (meters/week)")
+      labs(x="Year-Month",y="Movement Speed (meters/week)")+
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/SeasonalMovement.pdf",plot = SeasonalPlot)
 ```
 It appears that LMB tended to have a wider distribution of movement than ALB across most months. Additionally, it appears that the median movement values were higher for nearly every month as well.
 
+```{r}
+months <- unique(NT_Manuals$MonthYear)
 
+p_results <- data.frame(MonthYear = character(), p_value = numeric(), stringsAsFactors = FALSE)
+
+for (m in months) {
+  sub_data <- NT_Manuals[NT_Manuals$MonthYear == m, ]
+  
+  test_res <- wilcox.test(LC_M_W ~ Species, data = sub_data, exact = FALSE)
+  
+  p_results <- rbind(p_results, data.frame(MonthYear = m, p_value = test_res$p.value))
+}
+```
 
 
 
@@ -275,30 +223,32 @@ Now we want to look at tournament dispersal movement for fish displaced by tourn
 First we need to isolate our alive tournament fish to calculate our values. 
 
 ```{r}
-T_Manuals_All = subset(Manuals, TournamentRelease == "Y")
-T_Manuals_All = T_Manuals_All %>% group_by(RewardTag1) %>% filter(n()>1)
+T_Manuals = subset(TrackMaster, TournamentRelease == "Y")
+T_Manuals = subset(T_Manuals, ManuallyTracked == "Y")
+T_Manuals = subset(T_Manuals, GroupMovement == "A")
+T_Manuals = T_Manuals %>% group_by(RewardTag1) %>% filter(n()>1)
 ```
 
 Here I make a date column which will be used to calculate days elapsed between step lengths as well as days elapsed since the fish was released at a tournament boat launch. 
 ```{r}
-Dates = make_date(year=T_Manuals_All$Year,month=T_Manuals_All$Month,day=T_Manuals_All$Day)
-T_Manuals_All = cbind(Dates,T_Manuals_All)
-colnames(T_Manuals_All)[1] <- "Date"
+Dates = make_date(year=T_Manuals$Year,month=T_Manuals$Month,day=T_Manuals$Day)
+T_Manuals = cbind(Dates,T_Manuals)
+colnames(T_Manuals)[1] <- "Date"
 ```
 
 I  created a spatial points class from the lat longs for the displaced fish and then plotted them on the Neely shp file to make sure they show up on the map.
 ```{r}
-T_Manuals_All = sf::st_as_sf(T_Manuals_All, coords = c("Long","Lat"),crs = crs(NeelySHP))#making spatial object out of lat/long columns
+T_Manuals = sf::st_as_sf(T_Manuals, coords = c("Long","Lat"),crs = crs(NeelySHP))#making spatial object out of lat/long columns
 
 plot(NeelySHP$geometry)
-plot(T_Manuals_All, add = T)
+plot(T_Manuals, add = T)
 ```
 
 Here is the loop that calculates each given fishes proximity to the ramp over time. Additionally, it calculates the movement rates of these fish over time. Both are stored in separate vectors. The proximity to the ramp is calculated by just doing a least cost distance of each location to each fish's starting location (the boat ramp). The movement rates/speeds are calculated in the same manner as they were for the control (non translocated fish) by calculating the step length between successive locations and then dividing by the time elapsed between the steps.Additionally, we add a vector that is WEEKS ELAPSED post capture to help with the first goal. 
 ```{r}
 Start = Sys.time()
 
-tag_nums = unique(T_Manuals_All$RewardTag1)#unique tag numbers
+tag_nums = unique(T_Manuals$RewardTag1)#unique tag numbers
 n_fish = length(tag_nums)#number of fish
 
 T_LC_Prox = numeric()
@@ -309,7 +259,7 @@ T_Days_Rel = numeric()
 for(i in 1:n_fish){
   
   new_tag = tag_nums[i]
-  new_dat = subset(T_Manuals_All,RewardTag1 == new_tag)
+  new_dat = subset(T_Manuals,RewardTag1 == new_tag)
   tmax = nrow(new_dat)
   Dispersal_prox = numeric(tmax)
   Dispersal_step = numeric(tmax)
@@ -348,29 +298,107 @@ difftime(End,Start, units = "mins")
 Here I just add the data to the datafram via cbind which I will then work with later. 
 ```{r}
 
-T_Manuals_All = cbind(T_LC_Prox, T_Manuals_All)
-colnames(T_Manuals_All)[1]<-"LC_Prox_m"#least-cost meters proximity to release ramp
+T_Manuals = cbind(T_LC_Prox, T_Manuals)
+colnames(T_Manuals)[1]<-"LC_Prox_m"#least-cost meters proximity to release ramp
 
-T_Manuals_All = cbind(T_LC_Step, T_Manuals_All)
-colnames(T_Manuals_All)[1]<-"LC_Step_m"#least cost step length in meters
+T_Manuals = cbind(T_LC_Step, T_Manuals)
+colnames(T_Manuals)[1]<-"LC_Step_m"#least cost step length in meters
 
-T_Manuals_All = cbind(T_Days_Rel, T_Manuals_All)
-colnames(T_Manuals_All)[1]<-"Days_Since_Rel"#Days since fish was initial released
+T_Manuals = cbind(T_Days_Rel, T_Manuals)
+colnames(T_Manuals)[1]<-"Days_Since_Rel"#Days since fish was initial released
 
-T_Manuals_All = cbind(T_Days_Step, T_Manuals_All)
-colnames(T_Manuals_All)[1]<-"Days_Step"#Days between previous location and current location for which the step length was calculated
+T_Manuals = cbind(T_Days_Step, T_Manuals)
+colnames(T_Manuals)[1]<-"Days_Step"#Days between previous location and current location for which the step length was calculated
 
-T_Manuals_All$LC_M_D = T_Manuals_All$LC_Step_m/T_Manuals_All$Days_Step
+T_Manuals$LC_M_W = T_Manuals$LC_Step_m/(T_Manuals$Days_Step/7)
 
-T_Manuals_All$Weeks_Since_Rel = T_Manuals_All$Days_Since_Rel/7
+T_Manuals$Weeks_Since_Rel = T_Manuals$Days_Since_Rel/7
 
-plot(T_Manuals_All$LC_Step_m~T_Manuals_All$Weeks_Since_Rel)
+T_Manuals = subset(T_Manuals,Weeks_Since_Rel != 0)
 
+T_Manuals$RoundedWeekSinceRel = floor(T_Manuals$Weeks_Since_Rel)+1
 #THIS IS HOW TO SAVE THE SPATIAL GEOMETRY BACK INTO A CSV. 
 #st_write(Dispersal,"DispersalTESTER.csv", layer_options = "GEOMETRY=AS_XY")
 ```
 
-Add graphs about proximity, movement speeds, etc. over time. (by species)? 
+Movement Speeds as a function of time since Rel for both Black Bass and separated by species.
+```{r}
+BlackBassDispSpeed = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_M_W))+
+      #geom_boxplot(aes(fill=Species),outlier.color=NA)+
+      geom_boxplot(outlier.color=NA)+
+      coord_cartesian(ylim=c(0,10000))+
+      scale_x_discrete(limits = as.character(1:20))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Weeks Since Release",y="Movement Speed (meters/week)")+
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+SpeciesDispSpeed = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_M_W))+
+      geom_boxplot(aes(fill=Species),outlier.color=NA)+
+      coord_cartesian(ylim=c(0,10000))+
+      scale_x_discrete(limits = as.character(1:20))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Weeks Since Release",y="Movement Speed (meters/week)")+
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/SpeciesDispSpeeds.pdf",plot = SpeciesDispSpeed)
+```
+
+
+```{r}
+SpeciesProx = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_Prox_m))+
+      geom_boxplot(aes(fill=Species),outlier.color=NA)+
+      #geom_boxplot(outlier.color=NA)+
+      #coord_cartesian(ylim=c(0,10000))+
+      scale_x_discrete(limits = as.character(1:20))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Weeks Since Release",y="Proximity to Release Ramp (meters)")+
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+BlackBassProx = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_Prox_m))+
+      #geom_boxplot(aes(fill=Species),outlier.color=NA)+
+      geom_boxplot(outlier.color=NA)+
+      #coord_cartesian(ylim=c(0,10000))+
+      scale_x_discrete(limits = as.character(1:20))+
+      theme_classic(base_size=12)+
+      scale_y_continuous(expand=c(0.013,0))+
+      labs(x="Weeks Since Release",y="Proximity to Release Ramp (meters)")+
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/SpeciesProx.pdf",plot = SpeciesProx)
+```
+
+
+## Proportion of Alive Released Fish WITHIN 3 km Release Zone over time (Binomial Approach)
+
+```{r}
+CL_Fish = subset(T_Manuals,ReleaseRamp == "CL")
+
+weekly_summary <- CL_Fish %>%
+  group_by(Week = RoundedWeekSinceRel) %>%
+  summarise(
+    TotalFish = n(),
+    NumWithin3km = sum(LC_Prox_m  > 3000, na.rm = TRUE),
+    PropWithin3km = NumWithin3km / TotalFish
+  ) %>%
+  arrange(Week)
+
+Prop_Dispersed = ggplot(weekly_summary, aes(x = Week, y = PropWithin3km)) +
+  geom_line(color="blue") +
+  geom_point()+
+  labs(x = "Weeks Since Release", y = "Proportion Dispersed") +
+  theme_classic(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0.01))+
+  scale_x_continuous(limits = c(0,52))+
+  geom_text(aes(label = TotalFish), vjust = -1, size = 3.5, color = "black")
+
+
+#ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/Prop_Dispersed.pdf",plot = Prop_Dispersed)
+
+```
 
 ## Step Selection (Dispersal Efficiency)
 
@@ -395,6 +423,8 @@ Now, all we need is the first two observations to calculate how far these fish w
 DistanceTransloc = DistanceTransloc %>% 
                    group_by(RewardTag1) %>%
                    slice(1:2)
+
+DistanceTransloc = sf::st_as_sf(DistanceTransloc, coords = c("Long","Lat"),crs = crs(NeelySHP))
 ```
 
 This loop should return the relative distance that each fish was translocated to a tournament weigh in site in meters...
@@ -409,13 +439,12 @@ for(i in 1:n_fish){
   new_dat = subset(DistanceTransloc,RewardTag1 == new_tag)
   tmax = nrow(new_dat)
   Transloc_Dist = numeric(tmax)
-  days = numeric(tmax)
-  
+
   for(t in 2:tmax){
     
-    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[t-1],new_dat$Lat[t-1]))#
+    dist_m = gdistance:::costDistance(NeelyTrans, fromCoords = sf::st_coordinates(new_dat[t,]),
+                                                  toCoords = sf::st_coordinates(new_dat[(t-1),]))
     Transloc_Dist[t] = dist_m
-    
   }
   
   T_Transloc_Dist = append(T_Transloc_Dist,Transloc_Dist)
@@ -431,24 +460,17 @@ T_Transloc_Dist_KM = T_Transloc_Dist/1000
 DistanceTransloc = DistanceTransloc %>% group_by(RewardTag1) %>% slice(2)
 
 DistanceTransloc = cbind(DistanceTransloc,T_Transloc_Dist_KM)
-
-colnames(DistanceTransloc)[26]="T_Transloc_Dist_KM"
 ```
 
 Plot of translocated distance distribution (by species)
 ```{r}
-ALB_Transloc = filter(DistanceTransloc, Species == "ALB")
+TranslocateDistPlot = ggplot(DistanceTransloc, aes(x = T_Transloc_Dist_KM, fill=Species)) +
+  geom_histogram(binwidth = 2,color="black") +
+  facet_wrap(~Species,ncol=1)+
+  labs(x = "Distance Translocated by Angler (km)", y = "# of Fish") +
+  theme_classic()
 
-h1 = hist(DistanceTransloc$T_Transloc_Dist_KM, breaks = c(seq(0,26,2)),
-          xlab = "Distance Translocated By Angler (km)",
-          ylab = "# of fish",col="Red")
-
-h2 = hist(ALB_Transloc$T_Transloc_Dist_KM, breaks = c(seq(0,26,2)),col = "Blue")
-
-plot(h1, col = "Red", xlab = "KM Translocated by Angler",main=NULL)
-plot(h2, col = "Blue", add=T)
-legend(22,10,c("LMB", "ALB"), fill = c("Red","Blue"), title = "Species")
-#axis(1,h1$mids, labels = c("0-2", "2.1-4", "4.1,6","6.1,8", #"8.1-10","10.1-12","12.1-14","14.1-16","16.1-18","18.1-20","20.1-22","22.1-24","24.1-26"), tick = FALSE, padj=-1.5)
+#ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/TranslocateDistPlot.pdf",plot = TranslocateDistPlot)
 ```
 
 ## Homing
@@ -466,13 +488,16 @@ This should lead the filter by 1 row thus giving us its last known location and 
 Homing = Homing %>% 
          group_by(RewardTag1) %>% 
          filter(TournamentRelease == "Y" | lead(TournamentRelease=="Y"))
+
+Homing = subset(Homing, GroupMovement == "A")
+
+Homing = sf::st_as_sf(Homing, coords = c("Long","Lat"),crs = crs(NeelySHP))
 ```
 
 Now we need to setup a loop that calculates the relative distance between each successive location and its last known position before it was translocated by an angler... We essentially did this for the proximity to boat ramp loop.
 
 Setup vectors and loop here 
 ```{r}
-
 tag_nums = unique(Homing$RewardTag1)
 n_fish = length(tag_nums)# of individual fish making up dataset
 
@@ -490,7 +515,8 @@ for(i in 1:n_fish){
   
   for(t in 2:tmax){
     
-    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[1],new_dat$Lat[1]))#
+    dist_m = gdistance:::costDistance(NeelyTrans, fromCoords = sf::st_coordinates(new_dat[t,]),
+                                                  toCoords = sf::st_coordinates(new_dat[1,]))
     Homing_Dist[t] = dist_m
     WeeksFromRel[t] = as.numeric(new_dat$Date[t]-new_dat$Date[2])/7
     
@@ -500,10 +526,8 @@ for(i in 1:n_fish){
 }
 
 Homing = cbind(Homing,Homing_SL)
-colnames(Homing)[27]<-"ProxMToLastKnownLocation"
 
 Homing = cbind(Homing,WeeksSinceRel)
-colnames(Homing)[28]<-"WeeksSinceRel"
 
 Homing
 ```
@@ -513,17 +537,41 @@ Graphs, NEED TO MAKE SURE THERE IS SOME INDICATION WHETHER THEY ARE ALIVE OR NOT
 
 Homing = Homing %>% group_by(RewardTag1) %>% slice(2:n())#Gets rid of double zeroes and intial location
 
-ggplot(data = Homing, aes(x = WeeksSinceRel, y = ProxMToLastKnownLocation/1000, group = RewardTag1,
+ggplot(data = Homing, aes(x = WeeksSinceRel, y = Homing_SL/1000, group = RewardTag1,
                           color = as.factor(RewardTag1)))+
   geom_line()+
   geom_point(shape = factor(Homing$GroupMovement))
 #triangle = Dead.... Need to look at this panel by panel to look at potential homing.
 
-ggplot(data = Homing, aes(x = WeeksSinceRel, y = ProxMToLastKnownLocation/1000,
+ggplot(data = Homing, aes(x = WeeksSinceRel, y = Homing_SL/1000,
                           color = as.factor(RewardTag1)))+
   geom_line()+
   geom_point(shape = factor(Homing$GroupMovement))+
   facet_wrap(vars(RewardTag1))
+
+
+
+unique_tags = unique(Homing$RewardTag1)
+
+for(tag in unique_tags){
+  dat = subset(Homing,RewardTag1 == tag)
+  
+   p <- ggplot(dat, aes(x = WeeksSinceRel, y = Homing_SL / 1000)) +
+    geom_line(color = "steelblue") +
+    geom_point(aes(shape = factor(GroupMovement)), size = 2) +
+    expand_limits(y=0)
+    labs(
+      title = paste("Homing Plot — Tag:", tag),
+      x = "Weeks Since Release",
+      y = "Homing Distance (km)",
+      shape = "Group Movement"
+    ) +
+    theme_classic(base_size = 12)
+
+  print(p)
+  
+}
+
 ```
 
 ## Alive vs Dead Movement
@@ -604,8 +652,7 @@ SectionAssignment = st_join(Sections, NeelySections)
 ######################################################################################
 ######################################################################################
 
-###### MAKE GRAPHS HERE 
-###### PERCENT WITHIN 3 km over time
+
 
 ######################################################################################
 ######################################################################################
