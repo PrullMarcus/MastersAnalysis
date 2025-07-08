@@ -8,7 +8,6 @@ output: html_document
 
 Loading in required packages for analysis
 ```{r setup, include=FALSE}
-
 require(lubridate)#For making date column
 require(cowplot)#For any plot griding and inseting (i.e. state of AL relative location)
 require(ggspatial)#For scale bar and compass for maps
@@ -27,11 +26,11 @@ require(tigris)#To retrieve AL outline from FedData
 
 First we need to read in my files from github. First file being read into R is the tracking data master sheet followed by my shapefile of Neely Henry which will be utilized later. Additionally, I load in the sections SHP file which will be used later on for the main model. 
 ```{r}
-
 TrackMaster = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TrackingDataMaster.csv")
-NeelySHP = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/SHP%20Files/NeelySHP_Feb2024_NAD_1983_2011.shp") 
+NeelySHP = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/SHP%20Files/NeelySHP_Feb2024_NAD_1983_2011.shp")
+ReleaseZone = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/SHP%20Files/Dispersal3kmPoly.shp")
 NeelySections = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/SHP%20Files/NeelySections.shp")
-
+CL_SHP = st_read("/vsicurl/https://github.com/PrullMarcus/MastersAnalysis/raw/main/SHP%20Files/CL.shp")
 ```
 
 Here are both of the shapefiles plotted just to ensure they visually look correct. 
@@ -56,7 +55,7 @@ TrackMaster
 
 ## Seasonal Movement Patterns
 
-First, we will look at manual tracking movements. There is an indicator column ("ManuallyTracked") that indicates whether we manually tracked a fish or not. For every fish the first location is the tagging location, followed by each subsequent location, therefore we need fish with >1 observations. 
+First, we will look at manual tracking movements. There is an indicator column ("ManuallyTracked") that indicates whether we manually tracked a fish or not. For every fish the first location is the tagging location, followed by each subsequent location, therefore we need fish with >2 observations. 
 ```{r}
 Manuals = TrackMaster[TrackMaster$ManuallyTracked=="Y",]
 Manuals = Manuals %>% group_by(RewardTag1) %>% filter (n()>2)
@@ -135,12 +134,14 @@ Now we need to convert the shapefile into a vector, then a raster, and then a tr
 
 ```{r}
 NeelyVec = vect(NeelySHP)
-NeelyR = rast(NeelyVec, res = 0.00008)#res of 8.8 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. tried 00004 but it took way too long. 
-
-NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
-
-NeelyRast[is.na(NeelyRast)] = 100
-
+NeelyBuffer = terra::buffer(NeelyVec, width = 500)
+#NeelyR = rast(NeelyVec, res = 0.00008)#res of 8.8 m grid cells, value of 1 is 1 "degree". that is why we need to use a big decimal to get it to meters. tried 00004 but it took way too long. 
+NeelyR = rast(NeelyBuffer, res = 0.00008)
+NeelyRast = rasterize(NeelyVec, NeelyR, field = 1)
+NeelyRast[is.na(NeelyRast)] = 100#Land/outside of shapefile has a value of 100
+NeelyRast = terra::mask(NeelyRast,NeelyBuffer)#Makes everything outside of the buffer NAs
+NeelyRast = terra::crop(NeelyRast, NeelyBuffer)#Crops down to just cells that are within the buffer
+#NeelyRast = rasterize(NeelyVec,NeelyR)#value of 1 is Neely, NA value is land
 plot(NeelyRast)
 ```
 Looks correct. The pixels with a value of "1" are Water and "100" is land. It does appear that there are some gaps in the raster which I don't really know how to fix. It does appear that the more fine-scale you make the raster the better (less gaps) there appears to be. But, if the calculation has to involve land at all, it will choose the most conservative route through these gaps due to its high cost (100)
@@ -149,6 +150,7 @@ Now, we have to convert this raster that we created into a different format whic
 ```{r}
 
 NeelyRast = raster(NeelyRast)#Converts spatraster to "raster" which is a different form of raster that the transition function needs in order to work properly. 
+
 NeelyTrans = transition(1/NeelyRast, transitionFunction = mean, directions = 8)
 
 #Here we correct for corners
@@ -819,11 +821,11 @@ release_period=interval(my("1-2022"),my_released) %/% months(1)+1
 ```{r}
 
 u_index = numeric()
-winter_group = c(1,2,12,13,14,24)#what n_mon periods coorespond to the winter months (dec, jan, feb). 
+winter_fall_group = c(1,2,9,10,11,12,13,14,21,22,23,24)#what n_mon periods coorespond to the winter months (dec, jan, feb). 
 u_counter = 2
 
 for(i in 1:24) {
-  if (i %in% winter_group) {
+  if (i %in% winter_fall_group) {
     u_index[i] = 1
   } else {
     u_index[i] = u_counter
@@ -833,28 +835,27 @@ for(i in 1:24) {
 
 nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
 
-  cm=plogis(theta[1:4])
+  cm=plogis(theta[1:3])
   
-  lambda=plogis(theta[5:6])
+  lambda=plogis(theta[4:5])
   lambda=c(lambda,1)
   
-  u_param=plogis(theta[7:(6+19)])#should be 19 of these (dec, jan, feb lumped into 1 u, separate for every other month)
+  u_param=plogis(theta[6:(5+13)])#should be 13 of these (sep, oct, nov, dec, jan, feb lumped into 1 u, separate for every other month)
   S=matrix(NA,nrow=n_rel,ncol=n_mon)
   
   p_ret=matrix(0,nrow=n_rel,ncol=n_mon+1)
   nll=numeric(n_rel)
+  u = numeric(n_mon)
 
   for (r in 1:n_rel){
     for(y in release_period[r]:n_mon){
       
-      if (y %in% c(1:2,12:14,24)) {
-        season = 1 #winter
+      if (y %in% c(1:2,9:14,21:24)) {
+        season = 1 #winter/fall
       } else if (y %in% c(3:5, 15:17)) {
         season = 2 #spring
-      } else if (y %in% c(6:8,18:20)) {
-        season = 3 #summer
       } else {
-        season = 4 #fall
+        season = 3 #summer
       }
       
       u[y] = u_param[u_index[y]]#this selects the grouped or individual u (winter or not).
@@ -882,7 +883,7 @@ nll=function(theta,recaps,TL,nTag,RewardLevel,release_period){
   sum(nll)
 }  #close function
 
-theta=c(qlogis(rep(0.3,4)),lambda=qlogis(c(.8,.9)), u = qlogis(rep(0.1,19)))
+theta=c(qlogis(rep(0.3,3)),lambda=qlogis(c(.8,.9)), u = qlogis(rep(0.1,13)))
 
 nll(theta,TL=TL,recaps = tests_merged[,5:29],nTag = tests_merged$Num.tagged, RewardLevel = tests_merged$RewardLevel,release_period=release_period)
 
@@ -907,7 +908,104 @@ aicc=2*fit$value+2*length(fit$par)*(length(fit$par)+1)/(nsamps-length(fit$par)-1
 
 
 
+Here is a basic model looking at loading rate into the zone. But, firstly we need to get monthly dispersal rates post release. 
 
+```{r}
+
+dat = subset(TrackMaster, TournamentRelease =="Y" & ManuallyTracked == "Y")
+
+dat = dat %>% group_by(RewardTag1) %>% filter(n()>1)
+
+
+tag_nums = unique(dat$RewardTag1)
+n_fish = length(tag_nums)# of individual fish making up dataset
+
+dat_prox = numeric()
+dat_months_since_rel = numeric()#only need to calculate this one time... So, this vector will not be included in the second loop
+
+#Outside loop that selects tag-number 
+for(i in 1:n_fish){
+  
+  new_tag = tag_nums[i]
+  new_dat = subset(dat,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  dat_prox_loop = numeric(tmax)
+  months = numeric(tmax)
+  
+  for(t in 2:tmax){
+    
+    dist_m = geosphere::distm(c(new_dat$Long[t],new_dat$Lat[t]),c(new_dat$Long[1],new_dat$Lat[1]))
+    dat_prox_loop[t] = dist_m
+    months[t] = as.numeric(new_dat$Date[t]-new_dat$Date[1])/30.44
+  }
+  dat_prox = append(dat_prox,dat_prox_loop)
+  dat_months_since_rel = append(dat_months_since_rel,months)
+}
+
+dat$ProxToRamp = dat_prox
+dat$MonthsSinceRel = dat_months_since_rel
+
+```
+
+```{r}
+
+dat$floor_month = floor(dat$MonthsSinceRel)
+dat$ceiling_month = ceiling(dat$MonthsSinceRel)
+dat$rounded_month = round(dat$MonthsSinceRel)
+
+#dat = subset(dat,GroupMovement == "A")
+
+
+proportional_montly_out = dat %>% group_by(floor_month) %>%
+                      summarize(
+                      total_fish = n_distinct(RewardTag1),
+                      fish_near_ramp = n_distinct(RewardTag1[ProxToRamp <=3000])
+                          ) %>% 
+                      mutate(prop_near_ramp = fish_near_ramp/total_fish)
+
+proportional_montly_out_rounded_month = dat %>% group_by(rounded_month) %>%
+                      summarize(
+                      total_fish = n_distinct(RewardTag1),
+                      fish_near_ramp = n_distinct(RewardTag1[ProxToRamp <=3000])
+                          ) %>% 
+                      mutate(prop_near_ramp = fish_near_ramp/total_fish)
+
+
+```
+
+```{r}
+
+target_months <- 0:24
+
+interpolated <- dat %>%
+  dplyr::select(RewardTag1, MonthsSinceRel, ProxToRamp) %>%
+  group_by(RewardTag1) %>%
+  arrange(MonthsSinceRel) %>%
+  summarise(
+    interp = list(approx(
+      x = MonthsSinceRel,
+      y = ProxToRamp,
+      xout = target_months,
+      rule = 1
+    )),
+    .groups = "drop"
+  ) %>%
+  unnest_wider(interp) %>%
+  unnest(cols = c(x, y)) %>%
+  rename(month_bin = x, proximity_interp = y)
+
+interpolated %>% filter(!is.na(proximity_interp))
+
+proportional_in = interpolated %>% group_by(month_bin) %>%
+                      summarize(
+                      total_fish = n_distinct(RewardTag1),
+                      fish_near_ramp = n_distinct(RewardTag1[proximity_interp <=3000])
+                          ) %>% 
+                      mutate(prop_near_ramp = fish_near_ramp/total_fish)
+
+
+
+```
 
 
 
@@ -939,14 +1037,14 @@ studyArea
 studyArea = st_as_sfc(studyArea)
 
 plot(st_geometry(alabama))
-plot(studyArea, col='red', add=T)
+plot(studyArea, col='black', add=T)
 
-zoomedOut = ggplot()+
-  geom_sf(data = alabama)+
-  geom_sf(data = studyArea, fill=NA, color='red')
+ zoomedOut = ggplot()+
+  geom_sf(data = alabama, fill = NA, color = "black")+
+  geom_sf(data = studyArea, fill = "black", color='black')
 
 zoomedOut = zoomedOut +
-  theme_bw()+ #Gets rid of most of the colors
+  theme_void()+ #Gets rid of most of the colors
   theme(panel.grid=element_blank(), #Removes the gridlines
         axis.text=element_blank(), #Removes the axis text
         axis.ticks=element_blank(), #Removes the axis tick marks
@@ -956,23 +1054,45 @@ zoomedOut
 ```
 
 ```{r}
+#Adding column to shp files that legend labels will use
+ReleaseZone$ZoneLabel = "Release Zone"
+CL_SHP$Label = "Coosa Landing Boat Launch"
+
+bbox_studyarea = st_bbox(NeelySHP)
 
 NeelyPlot = ggplot() + 
-  geom_sf(data = NeelySHP, fill = "lightblue", color = "black") +
+  geom_sf(data = NeelySHP, fill = "NA", color = "black") +
+  geom_sf(data = ReleaseZone, aes(fill = ZoneLabel)) + 
+  geom_sf(data = CL_SHP, aes(shape = Label, color = Label), size = 3, fill = "red") + 
+  
+  scale_fill_manual(name = NULL, values = c("Release Zone" = "yellow"))+
+  scale_shape_manual(values = c("Coosa Landing Boat Launch" = 24),name=NULL)+
+  scale_color_manual(values = c("Coosa Landing Boat Launch" = "black"),name = NULL)+
+  
   theme_void()+
+  theme(panel.border = element_rect(color="black",size=1,fill=NA),
+        legend.position = c(0.03,0.83),
+        legend.key.size = unit(0.6, "lines"),
+        legend.spacing.y = unit(0.1,"cm"),
+        legend.justification = c(0,1),
+        legend.box.margin = margin(0,0,0,0),
+        legend.margin = margin(0,0,0,0))+
+  coord_sf(xlim = c(bbox_studyarea["xmin"],bbox_studyarea["xmax"]),
+           ylim = c(bbox_studyarea["ymin"],bbox_studyarea["ymax"]),
+          expand = FALSE ) +
   annotation_scale(location="br", style = "ticks", width_hint = 0.3)+
   annotation_north_arrow(location = "tl", which_north="true",
                          height = unit(0.8,"cm"),
                          width = unit(0.8,"cm"))
+NeelyPlot
 
-bbox_studyarea = st_bbox(NeelySHP)
 
-NeelyMap = ggdraw()+
-          draw_plot(NeelyPlot)+
-          draw_plot(zoomedOut, x = 0.22, y = 0.81, width = 0.2, height = 0.2)+
-          theme(panel.border = element_rect(color="black",size=1,fill=NA))+
+NeelyMap = ggdraw() +
+ draw_plot(NeelyPlot)+
+ draw_plot(zoomedOut, x = 0.07, y = 0.84, width = 0.15, height = 0.15)
 NeelyMap
 
+ggsave("NeelyOutline2.pdf", plot = NeelyMap,width = 7, height = 7, units = "in", dpi = 400, device=cairo_pdf)
 ```
 
 
