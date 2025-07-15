@@ -464,9 +464,12 @@ DistanceTransloc = cbind(DistanceTransloc,T_Transloc_Dist_KM)
 
 Plot of translocated distance distribution (by species)
 ```{r}
+install.packages("ggh4x")
+require("ggh4x")
+
 TranslocateDistPlot = ggplot(DistanceTransloc, aes(x = T_Transloc_Dist_KM, fill=Species)) +
-  geom_histogram(binwidth = 2,color="black") +
-  facet_wrap(~Species,ncol=1)+
+  geom_histogram(binwidth = 2,boundary=0,color="black") +
+  facet_wrap2(~Species,ncol=1, axes = "all")+
   labs(x = "Distance Translocated by Angler (km)", y = "# of Fish") +
   theme_classic()
 
@@ -532,6 +535,28 @@ Homing = cbind(Homing,WeeksSinceRel)
 Homing
 ```
 
+```{r}
+min_dist = Homing %>% group_by(RewardTag1) %>% summarise(MinDistFromPrev = min(Homing_SL/1000))
+merged = st_drop_geometry(DistanceTransloc) %>% left_join(st_drop_geometry(min_dist), by = "RewardTag1")
+
+merged =  merged %>% mutate(Within1km = as.numeric(MinDistFromPrev) <=1)
+
+merged <- merged %>%
+  mutate(DisplacementBin = cut(T_Transloc_Dist_KM,
+                               breaks = seq(0, max(T_Transloc_Dist_KM, na.rm = TRUE) + 2, by = 2),
+                               right = FALSE, include.lowest = TRUE))
+
+# Summarize counts by species and bin
+summary_table <- merged %>%
+  group_by(Species, DisplacementBin) %>%
+  summarise(Count = n(),
+            ReturnedWithin1km = sum(Within1km, na.rm = TRUE),
+            .groups = 'drop')
+
+# View the table
+print(summary_table)
+```
+
 Graphs, NEED TO MAKE SURE THERE IS SOME INDICATION WHETHER THEY ARE ALIVE OR NOT. Add POINTS FOR DETECTIONS, PERCENTAGES, SPECIES,  
 ```{r}
 
@@ -572,7 +597,118 @@ for(tag in unique_tags){
   
 }
 
+Homing
+
+
+
 ```
+
+```{r}
+
+library(dplyr)
+
+#Date = make_date(year = TrackMaster$Year, month = TrackMaster$Month, day = TrackMaster$Day)
+#TrackMaster = cbind(Date,TrackMaster)#binding the vector to the main csv
+#colnames(TrackMaster)[1]<-"Date"#Naming the date column "Date"
+
+TrackFilt = TrackMaster %>% group_by(RewardTag1) %>% filter(ManuallyTracked == "Y"& GroupMovement =="A") %>% slice(-1)
+
+# Step 1: Get first tournament release date per RewardTag1
+release_dates <- TrackFilt %>%
+  filter(TournamentRelease == "Y") %>%
+  group_by(RewardTag1) %>%
+  summarise(release_date = min(Date), .groups = "drop")
+
+# Step 2: Join back and label as Pre/Post
+labeled <- TrackFilt %>%
+  inner_join(release_dates, by = "RewardTag1") %>%
+  filter(ManuallyTracked == "Y") %>%
+  mutate(period = case_when(
+    Date < release_date ~ "Pre",
+    Date > release_date ~ "Post",
+    TRUE ~ NA_character_
+  )) %>%
+  filter(!is.na(period))
+
+# Step 3: Keep only RewardTag1 groups with BOTH Pre and Post
+valid_tags <- labeled %>%
+  group_by(RewardTag1) %>%
+  summarise(
+    has_pre = any(period == "Pre"),
+    has_post = any(period == "Post"),
+    .groups = "drop"
+  ) %>%
+  filter(has_pre & has_post)
+
+# Step 4: Filter labeled data to only those groups
+filtered_labeled <- labeled %>%
+  group_by(RewardTag1) %>%
+  summarise(
+    pre_count = sum(period == "Pre"),
+    post_count = sum(period == "Post"),
+    .groups = "drop"
+  ) %>%
+  filter(pre_count >= 2, post_count >= 2) %>%
+  inner_join(labeled, by = "RewardTag1")
+
+tag_nums = unique(filtered_labeled$RewardTag1)
+n_fish = length(tag_nums)# of individual fish making up dataset
+
+WeeksBetween = numeric()
+PrePost_LC = numeric()
+
+
+filtered_labeled = sf::st_as_sf(filtered_labeled, coords = c("Long","Lat"),crs = crs(NeelySHP))
+
+
+#Outside loop that selects tag-number 
+for(i in 1:n_fish){
+  
+  new_tag = tag_nums[i]
+  new_dat = subset(filtered_labeled,RewardTag1 == new_tag)
+  tmax = nrow(new_dat)
+  PrePost_Dist = numeric(tmax)
+  Weeks = numeric(tmax)
+  
+  for(t in 2:tmax){
+    
+    dist_m = gdistance:::costDistance(NeelyTrans, fromCoords = sf::st_coordinates(new_dat[t,]),
+                                                  toCoords = sf::st_coordinates(new_dat[(t-1),]))
+    PrePost_Dist[t] = dist_m
+    Weeks[t] = as.numeric(new_dat$Date[t]-new_dat$Date[t-1])/7
+    
+  }
+  PrePost_LC = append(PrePost_LC,PrePost_Dist)
+  WeeksBetween = append(WeeksBetween, Weeks)
+}
+
+filtered_labeled = cbind(filtered_labeled,PrePost_LC)
+
+filtered_labeled = cbind(filtered_labeled,WeeksBetween)
+
+filtered_labeled2 = filtered_labeled %>% group_by(RewardTag1,period) %>% filter(row_number() !=1) %>% ungroup()
+filtered_labeled2$m_w = filtered_labeled2$PrePost_LC/filtered_labeled2$WeeksBetween
+filtered_labeled2$period = factor(filtered_labeled2$period, levels = c("Pre", "Post"))
+
+ggplot(filtered_labeled2, aes(x = period, y = m_w, fill = period))+
+  geom_boxplot(position = position_dodge(width = 0.8))+
+  facet_wrap(~RewardTag1,scales = "free_y") +
+  theme_classic()
+
+PrePost_plot = ggplot(filtered_labeled2, aes(x = Date, y = m_w, group = RewardTag1, shape = period)) +
+  geom_point(size = 2) + 
+  geom_line() + 
+  geom_vline(aes(xintercept = release_date),linetype="dashed", color = "red", inherit.aes = FALSE)+
+  facet_wrap(~RewardTag1, scales = "free") + 
+  theme_classic() + 
+  ylab("Movement Speed (meters/week")+
+  theme(axis.text.x = element_blank()) +
+  labs(color=NULL, shape = NULL)
+
+#ggsave("PrePost_plot.pdf", plot = PrePost_plot)
+```
+
+
 
 ## Alive vs Dead Movement
 
