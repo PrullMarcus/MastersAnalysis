@@ -236,7 +236,7 @@ nll=function(theta,recaps,TL,nTag,RewardLevel,release_period,f_index,m_index){
   m_param=exp(theta[1:n_m])
   
   lambda=plogis(theta[(n_m+1):(n_m+n_lam)])
-  lambda=c(lambda,0.8)
+  lambda=c(lambda,.70)####lambda param####
   
   ft_param=exp(theta[(n_m+n_lam+1):(n_m+n_lam+n_f)])#should be 19 of these (dec, jan, feb lumped into 1 u, separate for every other month)
   fnt_param=exp(theta[(n_m+n_lam+n_f+1):(n_m+n_lam+2*n_f)])#should be 19 of these (dec, jan, feb lumped into 1 u, separate for every other month)
@@ -292,11 +292,11 @@ nll=function(theta,recaps,TL,nTag,RewardLevel,release_period,f_index,m_index){
   sum(nll)
 }  #close function
 
-theta=c(m=log(rep(0.3,length(unique(m_index)))),lambda=qlogis(c(.8,.9)), ft = log(rep(0.1,length(unique(f_index)))),fnt = log(rep(0.1,length(unique(f_index)))))
+theta=c(m=log(rep(0.3,length(unique(m_index)))),lambda=qlogis(c(.55,.65)), ft = log(rep(0.1,length(unique(f_index)))),fnt = log(rep(0.1,length(unique(f_index)))))
 
 nll(theta,TL=TL,recaps = tests_merged[,-c(1:4)],nTag = tests_merged$Num.tagged, RewardLevel = tests_merged$RewardLevel,release_period=release_period,m_index=m_index,f_index=f_index)
 
-fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=tests_merged$Num.tagged, RewardLevel=tests_merged$RewardLevel,release_period=release_period,recaps=tests_merged[,-c(1:4)],
+fit70=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=tests_merged$Num.tagged, RewardLevel=tests_merged$RewardLevel,release_period=release_period,recaps=tests_merged[,-c(1:4)],
           control = list(trace=1,maxit = 200),m_index=cm_index,f_index=u_index)#needed a few more iterations to "converge"
 
 plogis(fit$par)
@@ -337,6 +337,194 @@ l95ci_lam=plogis(fit$par[(n_m+1):(n_m+2)]-1.96*se[(n_m+1):(n_m+2)])
 
 plogis(fit$par)
 
+
+
+
+
+
+
+
+
+
+
+
+
+plogis(fit$par)
+plogis(theta)
+
+n_m=length(unique(m_index))
+n_f=length(unique(f_index))
+
+se70=sqrt(diag(solve(fit70$hessian)))
+se85=sqrt(diag(solve(fit85$hessian)))
+se100=sqrt(diag(solve(fit100$hessian)))
+
+u95ci_m_70=exp(fit70$par[1:n_m]+1.96*se70[1:n_m])
+u95ci_m_85=exp(fit85$par[1:n_m]+1.96*se85[1:n_m])
+u95ci_m_100=exp(fit100$par[1:n_m]+1.96*se100[1:n_m])
+
+est_m_70=exp(fit70$par[1:n_m])
+est_m_85=exp(fit85$par[1:n_m])
+est_m_100=exp(fit100$par[1:n_m])
+
+l95ci_m_70=exp(fit70$par[1:n_m]-1.96*se70[1:n_m])
+l95ci_m_85=exp(fit85$par[1:n_m]-1.96*se85[1:n_m])
+l95ci_m_100=exp(fit100$par[1:n_m]-1.96*se100[1:n_m])
+
+months=c('J','F','M','A','M','J','J','A','S','O','N','D')
+
+u95ci_ft_70=exp(fit70$par[(n_m+3):(n_m+2+n_f)]+1.96*se70[(n_m+3):(n_m+2+n_f)])
+u95ci_ft_85=exp(fit85$par[(n_m+3):(n_m+2+n_f)]+1.96*se85[(n_m+3):(n_m+2+n_f)])
+u95ci_ft_100=exp(fit100$par[(n_m+3):(n_m+2+n_f)]+1.96*se100[(n_m+3):(n_m+2+n_f)])
+
+est_ft_70=exp(fit70$par[(n_m+3):(n_m+2+n_f)])
+est_ft_85=exp(fit85$par[(n_m+3):(n_m+2+n_f)])
+est_ft_100=exp(fit100$par[(n_m+3):(n_m+2+n_f)])
+
+l95ci_ft_70=exp(fit70$par[(n_m+3):(n_m+2+n_f)]-1.96*se70[(n_m+3):(n_m+2+n_f)])
+l95ci_ft_85=exp(fit85$par[(n_m+3):(n_m+2+n_f)]-1.96*se85[(n_m+3):(n_m+2+n_f)])
+l95ci_ft_100=exp(fit100$par[(n_m+3):(n_m+2+n_f)]-1.96*se100[(n_m+3):(n_m+2+n_f)])
+
+par(mar = c(5, 5, 4, 2))
+plot(est_ft_70[f_index][1:12],type='l',ylim=c(0,0.3),xaxt='n',xlab='Month',ylab=expression('Tournament Weigh-in Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(u95ci_ft_70[f_index][1:12],lty=3)
+lines(l95ci_ft_70[f_index][1:12],lty=3)
+
+par(mar = c(5, 5, 4, 2))
+plot(est_ft_85[f_index][1:12],type='l',ylim=c(0,0.3),xaxt='n',xlab='Month',ylab=expression('Tournament Weigh-in Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(u95ci_ft_85[f_index][1:12],lty=3)
+lines(l95ci_ft_85[f_index][1:12],lty=3)
+
+par(mar = c(5, 5, 4, 2))
+plot(est_ft_100[f_index][1:12],type='l',ylim=c(0,0.3),xaxt='n',xlab='Month',ylab=expression('Tournament Weigh-in Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(u95ci_ft_100[f_index][1:12],lty=3)
+lines(l95ci_ft_100[f_index][1:12],lty=3)
+
+par(mar = c(5, 5, 4, 2))
+plot(est_ft_85[f_index][1:12],type='l',col="blue",ylim=c(0,0.3),xaxt='n',xlab='Month',ylab=expression('Tournament Weigh-in Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(est_ft_70[f_index][1:12],col="darkorange")
+lines(est_ft_100[f_index][1:12],col="darkgreen")
+legend("topright", legend = c(expression(lambda[300] == 0.70),
+                              expression(lambda[300] == 0.85),
+                              expression(lambda[300] == 1)),
+                              col = c("darkorange","blue","darkgreen"),
+                              lty = 1
+                              )
+
+m_bar = data.frame(
+  lambda300 = c(0.7,0.85,1),
+  estimate = c(est_m_70,est_m_85,est_m_100),
+  l95 = c(l95ci_m_70,l95ci_m_85,l95ci_m_100),
+  u95 = c(u95ci_m_70,u95ci_m_85,u95ci_m_100)
+)
+
+ggplot(m_bar, aes(x=factor(lambda300),y=estimate))+
+  geom_col(width=0.6)+
+  geom_errorbar(aes(ymin=l95,ymax=u95),width=0.2)+
+  scale_y_continuous(expand=c(0,0))+
+  labs(x=expression(lambda300))+
+  theme_classic()
+
+u95ci_fnt70=exp(fit70$par[(n_m+3+n_f):(n_m+2+2*n_f)]+1.96*se70[(n_m+3+n_f):(n_m+2+2*n_f)])
+u95ci_fnt85=exp(fit85$par[(n_m+3+n_f):(n_m+2+2*n_f)]+1.96*se85[(n_m+3+n_f):(n_m+2+2*n_f)])
+u95ci_fnt100=exp(fit100$par[(n_m+3+n_f):(n_m+2+2*n_f)]+1.96*se100[(n_m+3+n_f):(n_m+2+2*n_f)])
+
+est_fnt70=exp(fit70$par[(n_m+3+n_f):(n_m+2+2*n_f)])
+est_fnt85=exp(fit85$par[(n_m+3+n_f):(n_m+2+2*n_f)])
+est_fnt100=exp(fit100$par[(n_m+3+n_f):(n_m+2+2*n_f)])
+
+l95ci_fnt70=exp(fit70$par[(n_m+3+n_f):(n_m+2+2*n_f)]-1.96*se70[(n_m+3+n_f):(n_m+2+2*n_f)])
+l95ci_fnt85=exp(fit85$par[(n_m+3+n_f):(n_m+2+2*n_f)]-1.96*se85[(n_m+3+n_f):(n_m+2+2*n_f)])
+l95ci_fnt100=exp(fit100$par[(n_m+3+n_f):(n_m+2+2*n_f)]-1.96*se100[(n_m+3+n_f):(n_m+2+2*n_f)])
+
+par(mar = c(5, 5, 4, 2))
+plot(est_fnt70[f_index][1:12],type='l',ylim=c(0,0.5),xaxt='n',xlab='Month',ylab=expression('On-water Angler Encounter Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(u95ci_fnt70[f_index][1:12],lty=3)
+lines(l95ci_fnt70[f_index][1:12],lty=3)
+
+par(mar = c(5, 5, 4, 2))
+plot(est_fnt85[f_index][1:12],type='l',ylim=c(0,0.5),xaxt='n',xlab='Month',ylab=expression('On-water Angler Encounter Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(u95ci_fnt85[f_index][1:12],lty=3)
+lines(l95ci_fnt85[f_index][1:12],lty=3)
+
+par(mar = c(5, 5, 4, 2))
+plot(est_fnt100[f_index][1:12],type='l',ylim=c(0,0.5),xaxt='n',xlab='Month',ylab=expression('On-water Angler Encounter Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(u95ci_fnt100[f_index][1:12],lty=3)
+lines(l95ci_fnt100[f_index][1:12],lty=3)
+
+par(mar = c(5, 5, 4, 2))
+plot(est_fnt85[f_index][1:12],type='l',col="blue",ylim=c(0,0.5),xaxt='n',xlab='Month',ylab=expression('On-water Angler Encounter Rate (month  '^-1*')'))
+axis(1,at=1:12,labels=months,cex.axis=1)
+lines(est_fnt70[f_index][1:12],col = "darkorange")
+lines(est_fnt100[f_index][1:12],col = "darkgreen")
+legend("topright",legend = c(expression(lambda[300] == 0.70), 
+                             expression(lambda[300] == 0.85), 
+                             expression(lambda[300] == 1)),
+                  col = c("darkorange","blue","darkgreen"),
+                  lty = 1)
+
+
+u95ci_lam70=plogis(fit70$par[(n_m+1):(n_m+2)]+1.96*se70[(n_m+1):(n_m+2)])
+u95ci_lam85=plogis(fit85$par[(n_m+1):(n_m+2)]+1.96*se85[(n_m+1):(n_m+2)])
+u95ci_lam100=plogis(fit100$par[(n_m+1):(n_m+2)]+1.96*se100[(n_m+1):(n_m+2)])
+
+est_lam70=plogis(fit70$par[(n_m+1):(n_m+2)])
+est_lam85=plogis(fit85$par[(n_m+1):(n_m+2)])
+est_lam100=plogis(fit100$par[(n_m+1):(n_m+2)])
+
+l95ci_lam70=plogis(fit70$par[(n_m+1):(n_m+2)]-1.96*se70[(n_m+1):(n_m+2)])
+l95ci_lam85=plogis(fit85$par[(n_m+1):(n_m+2)]-1.96*se85[(n_m+1):(n_m+2)])
+l95ci_lam100=plogis(fit100$par[(n_m+1):(n_m+2)]-1.96*se100[(n_m+1):(n_m+2)])
+
+lam_bar = data.frame(
+  lambda300 = c(0.7,0.7,0.85,0.85,1,1),
+  estimate = c(est_lam70,est_lam85,est_lam100),
+  l95 = c(l95ci_lam70,l95ci_lam85,l95ci_lam100),
+  u95 = c(u95ci_lam70,u95ci_lam85,u95ci_lam100),
+  group = rep(c("lambda100","lambda200"),3)
+)
+
+ggplot(lam_bar, aes(x=factor(lambda300),y=estimate,fill=group))+
+  geom_col(position=position_dodge(width=0.7), width=0.6)+
+  geom_errorbar(aes(ymin=l95,ymax=u95),position = position_dodge(width=0.7),width=0.2)+
+  scale_y_continuous(expand=c(0,0),limits=c(0,1))+
+  labs(x="lambda300")+
+  theme_classic()
+
+#### GRAPHS FROM EXCEL SIMULATION FOR EXIT SEMINAR ####
+
+load_est_70 = read.csv(file.choose())
+load_est_85 = read.csv(file.choose())
+load_est_100 = read.csv(file.choose())
+
+par(mar = c(5, 5, 4, 2))
+plot(load_est_70$prop.in.zone, type = "l",ylim=c(0,0.5))
+
+par(mar = c(5, 5, 4, 2))
+plot(load_est_85$prop.in.zone,type = "l",ylim=c(0,0.5))
+
+par(mar = c(5, 5, 4, 2))
+plot(load_est_100$prop.in.zone,type = "l",ylim=c(0,0.5))
+
+par(mar = c(5, 5, 4, 2))
+plot(load_est_70$prop.in.zone,type="l",ylim=c(0.1,0.5),xaxt='n',xlab='Year',col="darkorange",ylab = "Proportion of Black Bass in Release-Zone")
+axis(1, at = c(seq(1,120, 12)),
+        labels = c(1:10),
+        cex.axis = 1)
+lines(load_est_85$prop.in.zone,col="blue")
+lines(load_est_100$prop.in.zone,col="darkgreen")
+legend("topleft", legend = c(expression(lambda[300] == 0.7),
+                             expression(lambda[300] == 0.85),
+                             expression(lambda[300] == 1.0)),
+                  col = c("darkorange","blue","darkgreen"),
+                  lty= 1)
 
 
 
@@ -642,9 +830,9 @@ CL_sf = st_as_sf(CL, coords = c("lon","lat"),crs = 4326) %>% st_transform(crs = 
 Distances = as.numeric(st_distance(fish_sf, CL_sf[1,]))
 prop_3km = mean(Distances <= 2200)#0.1669565 (inflated because including other locations such as black creek. In reality those fish are well over 3km away from the launch) probably close to 10% of all tags, looks like closer to .1
 
+CPUE = TaggingMaster %>% group_by(TaggingEvent,Site,Date) %>% summarize(n=n())
 
-
-
+sum(CPUE$n)/nrow(CPUE)
 
 
 
