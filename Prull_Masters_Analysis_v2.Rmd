@@ -347,27 +347,32 @@ SpeciesDispSpeed = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = L
 
 
 ```{r}
-SpeciesProx = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_Prox_m))+
+SpeciesProx = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_Prox_m/1000))+
       geom_boxplot(aes(fill=Species),outlier.color=NA)+
       #geom_boxplot(outlier.color=NA)+
       #coord_cartesian(ylim=c(0,10000))+
       scale_x_discrete(limits = as.character(1:20))+
-      theme_classic(base_size=12)+
+      theme_classic(base_size=16)+
       scale_y_continuous(expand=c(0.013,0))+
-      labs(x="Weeks Since Release",y="Proximity to Release Ramp (meters)")+
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      labs(x="Weeks Since Release",y="Proximity to Release Ramp (kilometers)")+
+      theme(axis.text.x = element_text(angle = 45, hjust = 1),
+            axis.title.x = element_text(margin = margin(t=10)),
+            axis.title.y = element_text(margin = margin(r = 10)),
+            legend.position = c(0.9,0.9))
 
-BlackBassProx = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_Prox_m))+
+BlackBassProx = ggplot(T_Manuals,aes(x = as.factor(RoundedWeekSinceRel),y = LC_Prox_m/1000))+
       #geom_boxplot(aes(fill=Species),outlier.color=NA)+
       geom_boxplot(outlier.color=NA)+
-      #coord_cartesian(ylim=c(0,10000))+
+      #coord_cartesian(ylim=c(0,20))+
       scale_x_discrete(limits = as.character(1:20))+
-      theme_classic(base_size=12)+
+      theme_classic(base_size=16)+
       scale_y_continuous(expand=c(0.013,0))+
-      labs(x="Weeks Since Release",y="Proximity to Release Ramp (meters)")+
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      labs(x="Weeks Since Release",y="Proximity to Release Ramp (kilometers)")+
+      theme(axis.text.x = element_text(angle = 45, hjust = 1),
+            axis.title.x = element_text(margin = margin(t=10)),
+            axis.title.y = element_text(margin = margin(r = 10)))
 
-ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/SpeciesProx.pdf",plot = SpeciesProx)
+ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/BlackBassProx.pdf",plot = BlackBassProx)
 ```
 
 
@@ -385,18 +390,86 @@ weekly_summary <- CL_Fish %>%
   ) %>%
   arrange(Week)
 
+logistic_model_1 <- nls(
+  PropWithin3km ~ L / (1 + exp(-k * (Week - t0))),
+  data = weekly_summary,
+  start = list(L = 1, k = 0.2, t0 = 2),
+  weights = TotalFish,  # give more weight to high-sample weeks
+  algorithm = "port",   # allows constraints
+  lower = c(L = 0.7, k = 0.001, t0 = 0),
+  upper = c(L = 1.05, k = 10, t0 = 4))
+
+# Add fitted line to your data
+weekly_summary$fit <- predict(logistic_model_1)
+
+summary(logistic_model_1)
+
 Prop_Dispersed = ggplot(weekly_summary, aes(x = Week, y = PropWithin3km)) +
-  geom_line(color="blue") +
+  #geom_line(color="blue",linewidth = 1) +
   geom_point()+
+  geom_line(aes(y = fit), color = "red", linetype = "dashed",linewidth=2) +
   labs(x = "Weeks Since Release", y = "Proportion Dispersed") +
-  theme_classic(base_size = 12) +
+  theme_classic(base_size = 16) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   scale_y_continuous(limits = c(0, 1), expand = c(0, 0.01))+
-  scale_x_continuous(limits = c(0,52))+
-  geom_text(aes(label = TotalFish), vjust = -1, size = 3.5, color = "black")
+  scale_x_continuous(limits = c(0,52))
 
+#### FISH ARE CONSIDERED DISPERSED INDEFINITELY
+CL_Fish2 <- CL_Fish %>%
+  arrange(RewardTag1, RoundedWeekSinceRel) %>%
+  group_by(RewardTag1) %>%
+  mutate(
+    Dispersed = cumsum(LC_Prox_m > 3000 & !is.na(LC_Prox_m)) > 0
+  ) %>%
+  ungroup()
+
+# Summarize weekly
+weekly_summary <- CL_Fish2 %>%
+  group_by(Week = RoundedWeekSinceRel) %>%
+  summarise(
+    TotalFish = n(),
+    NumDispersed = sum(Dispersed, na.rm = TRUE),
+    PropDispersed = NumDispersed / TotalFish
+  ) %>%
+  arrange(Week)
+
+logistic_model_weighted <- nls(
+  PropDispersed ~ L / (1 + exp(-k * (Week - t0))),
+  data = weekly_summary,
+  start = list(L = 1, k = 0.2, t0 = 2),
+  weights = TotalFish,  # give more weight to high-sample weeks
+  algorithm = "port",   # allows constraints
+  lower = c(L = 0.7, k = 0.001, t0 = 0),
+  upper = c(L = 1.05, k = 10, t0 = 4)
+)
+
+# View model summary
+summary(logistic_model_weighted)
+
+# Add fitted line to your data
+weekly_summary$fit <- predict(logistic_model_weighted)
+
+
+# Plot
+Prop_Dispersed2 <- ggplot(weekly_summary, aes(x = Week, y = PropDispersed)) +
+  #geom_line(color = "blue",lwd=1) +
+  geom_point() +
+  geom_line(aes(y = fit), color = "red", linetype = "dashed",linewidth=2) +
+  labs(x = "Weeks Since Release", y = "Proportion Dispersed (>3km)") +
+  theme_classic(base_size = 16) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(limits = c(0, 1), expand = c(0, 0.01)) +
+  scale_x_continuous(limits = c(0, 52))
+  #geom_text(aes(label = TotalFish), vjust = -1, size = 3.5, color = "black")
 
 #ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/Prop_Dispersed.pdf",plot = Prop_Dispersed)
+
+install.packages("patchwork")
+require("patchwork")
+
+windows()
+both = Prop_Dispersed + Prop_Dispersed2 + plot_layout(ncol=2)
+ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/both2.pdf",plot = both,width = 12, height = 5)
 
 ```
 
@@ -471,9 +544,10 @@ TranslocateDistPlot = ggplot(DistanceTransloc, aes(x = T_Transloc_Dist_KM, fill=
   geom_histogram(binwidth = 2,boundary=0,color="black") +
   facet_wrap2(~Species,ncol=1, axes = "all")+
   labs(x = "Distance Translocated by Angler (km)", y = "# of Fish") +
-  theme_classic()
+  theme_classic(base_size = 16)+
+  theme(legend.position = "none")
 
-#ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/TranslocateDistPlot.pdf",plot = TranslocateDistPlot)
+ggsave(filename = "C:/Users/mrp0099/OneDrive - Auburn University/Desktop/ProposalGraphs/TranslocateDistPlot.pdf",plot = TranslocateDistPlot)
 ```
 
 ## Homing
