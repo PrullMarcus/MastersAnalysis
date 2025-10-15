@@ -4,8 +4,52 @@
 
 #### Obj 1 Data Setup POOLED ####
 
+#### Obj 1 TAG LOSS VALUE SUMMARY ####
+
+#Double Taggers Tagging
+Tagging = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TaggingMasterSheet.csv")
+Tagging$Date = as.Date(Tagging$Date,format = "%m/%d/%y")
+Tagging$ReleaseMonth = format(Tagging$Date,"%m-%Y")
+Tagging = subset(Tagging, Num.tagged == 2)
+unique(Tagging$ReleaseMonth)
+
+#Double Taggers Returns
+Returns = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TagReturnsMasterSheet.csv")
+Returns$Date.of.catch = as.Date(Returns$Date.of.catch,format = "%m/%d/%Y")
+Returns$ReturnMonth = format(Returns$Date.of.catch, "%m-%Y")
+Returns = Returns %>% filter(substr(ReturnMonth,4,7) %in% c("2022","2023"))
+unique(Returns$ReturnMonth)
+
+
+merge1 = merge(Returns, Tagging, by.x = "Tag.number", by.y = "Reward.Tag..", all.x = FALSE)
+merge1 = merge1 %>% dplyr::select(c(ReturnMonth,ReleaseMonth,Number.of.tags))
+
+merge2 = merge(Returns, Tagging, by.x = "Tag.number", by.y = "X2nd.Reward.Tag..", all.x=FALSE)
+merge2 = merge2 %>% dplyr::select(c(ReturnMonth,ReleaseMonth,Number.of.tags))
+
+merge3=rbind(merge1,merge2) %>% dplyr::select(c(ReturnMonth,ReleaseMonth,Number.of.tags))
+merge3 = merge3 %>% 
+  mutate(
+    ReleaseDate = as.Date(paste0(ReleaseMonth,"-01"),format = "%m-%Y-%d"),
+    ReturnDate = as.Date(paste0(ReturnMonth,"-01"),format = "%m-%Y-%d"),
+    MonthDiff = interval(ReleaseDate,ReturnDate) %/% months(1),
+    NumTagsReturn = ifelse(Number.of.tags == 2, 2, 1)
+  )
+
+TagLossTable = merge3 %>% count(MonthDiff, NumTagsReturn)
+TagLossTable = TagLossTable %>% tidyr::pivot_wider(names_from=MonthDiff, values_from=n,values_fill=0)
+
+
+test2 = tmp3 %>% group_by(MonthYear, RewardLevel,Num.tagged, RecapMonthYear) %>% count(n())
+test2 = tidyr::pivot_wider(test2,names_from = RecapMonthYear, values_from=n)
+test2[is.na(test2)]=0
+test2
+
+#### ORGANIZING ESTIMATION MODEL DATA ####
 #Necessary packages
-library(dplyr)
+
+
+#### Obj 1 Eslibrary(dplyr)
 library(lubridate)
 library(tidyr)
 
@@ -57,6 +101,7 @@ test
 #Additionally, I am going to add its release period and TaggingGroup which we can figure out from the tagging data for that individual fish. 
 
 tag_return = read.csv("https://github.com/PrullMarcus/MastersAnalysis/raw/main/TagReturnsMasterSheet.csv")
+tag_return = subset(tag_return, Which.body.of.water != "Logan Martin")
 
 tourney_returns = filter(tag_return, If.released.it.was == "c")
 tourney_returns
@@ -67,7 +112,7 @@ tourney_returns
 
 #An easy thing to do first is to change the Date.of.catch part to MonthYear just like it is in the matrix we setup.
 
-tourney_returns$Date.of.catch = as.Date(tourney_returns$Date.of.catch, format = "%m/%d/%y")
+tourney_returns$Date.of.catch = as.Date(tourney_returns$Date.of.catch, format = "%m/%d/%Y")
 tourney_returns$RecapMonthYear = format(tourney_returns$Date, "%m-%Y")
 unique(tourney_returns$RecapMonthYear)
 tourney_returns
@@ -123,7 +168,7 @@ nontourney_returns = nontourney_returns %>% dplyr::select(c("Tag.number","Second
 nontourney_returns
 
 #An easy thing to do first is to change the Date.of.catch part to MonthYear just like it is in the matrix we setup.
-nontourney_returns$Date.of.catch = as.Date(nontourney_returns$Date.of.catch, format = "%m/%d/%y")
+nontourney_returns$Date.of.catch = as.Date(nontourney_returns$Date.of.catch, format = "%m/%d/%Y")
 nontourney_returns$RecapMonthYear = format(nontourney_returns$Date, "%m-%Y")
 unique(nontourney_returns$RecapMonthYear)
 
@@ -191,12 +236,10 @@ tests_merged=cbind(tourn_tests_merged,non_tests_merged)
 tests_merged = tests_merged %>% mutate(across(where(is.numeric),~replace_na(.,0)))
 tests_merged
 
-
-#### Obj 1 Estimation Model #### 
+#### Estimation Model #### 
 
 n_mon = 24#number of recap periods. 2 calendar years with a montly timestep = 24 months.
 n_rel = nrow(tests_merged)#Do we need to change this to 5 if we aren't differenciating by tag-type within the model????
-TL = 0.05#tagloss/shedding (max).#CALCULATE THIS 
 
 tests_merged$NotSeen = tests_merged$n-apply(tests_merged[,-c(1:4)],1,sum)
 
@@ -231,11 +274,14 @@ cm_index=rep(1,24)
 m_index=cm_index
 f_index=u_index
 
-lambda_fixed = c(0.70, 0.85, 1)
+TL_init=0.028#about 3% in first month of tagging 
+TL_chr=0.019#about 2% per month
+
+lambda_fixed = c(0.8, 0.9, 1)
 lambda_start = list(
-  c(qlogis(0.55),qlogis(0.65)),
-  c(qlogis(0.75),qlogis(0.80)),
-  c(qlogis(0.8),qlogis(0.9))
+  c(qlogis(0.7),qlogis(0.75)),
+  c(qlogis(0.8),qlogis(0.85)),
+  c(qlogis(0.9),qlogis(0.95))
 )
 
 fit_results = list()
@@ -248,13 +294,13 @@ for (i in seq_along(lambda_fixed)) {
   n_f = length(unique(f_index))
   
   theta = c(
-    log(rep(0.3, n_m)),
-    lambda_init, 
-    log(rep(0.1, n_f)),
-    log(rep(0.1, n_f))
+    m=log(rep(0.3, n_m)),
+    lambda=lambda_init, 
+    ft=log(rep(0.1, n_f)),
+    fnt=log(rep(0.1, n_f))
   )
   
-  nll=function(theta,recaps,TL,nTag,RewardLevel,release_period,f_index,m_index){
+  nll=function(theta,recaps,TL_init,TL_chr,nTag,RewardLevel,release_period,f_index,m_index){
     n_m=length(unique(m_index))
     n_f=length(unique(f_index))
     n_lam=2
@@ -275,6 +321,8 @@ for (i in seq_along(lambda_fixed)) {
     unt=numeric(n_mon)
     
     S=matrix(NA,nrow=n_rel,ncol=n_mon)
+    #Q=matrix(NA,nrow=n_rel,ncol=n_mon)
+    #p_tag=matrix(NA,nrow=n_rel,ncol=n_mon)
     
     p_ret=matrix(0,nrow=n_rel,ncol=2*n_mon+1)
     nll=numeric(n_rel)
@@ -298,20 +346,26 @@ for (i in seq_along(lambda_fixed)) {
         S[r,y]=exp(-Z[y])
         
         if(release_period[r]==y){
-          
-          p_ret[r,y]=ut[y]*(1-TL^nTag[r])*lambda[RewardLevel[r]]
-          p_ret[r,n_mon+y]=unt[y]*(1-TL^nTag[r])*lambda[RewardLevel[r]]
+          Q=(1-TL_init)*exp(-TL_chr*(y-release_period[r]))
+          p_tag=Q^2*(nTag[r]-1)+Q*(2*(1-Q))^(nTag[r]-1)
+          p_ret[r,y]=ut[y]*p_tag*lambda[RewardLevel[r]]
+          p_ret[r,n_mon+y]=unt[y]*p_tag*lambda[RewardLevel[r]]
+          #p_ret[r,y]=ut[y]*(1-TL_init^nTag[r])*lambda[RewardLevel[r]]
+          #p_ret[r,n_mon+y]=unt[y]*(1-TL_init^nTag[r])*lambda[RewardLevel[r]]
           
         } else {
-          
-          p_ret[r,y]=ut[y]*(1-TL^nTag[r])*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
-          p_ret[r,n_mon+y]=unt[y]*(1-TL^nTag[r])*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
+          Q=(1-TL_init)*exp(-TL_chr*(y-release_period[r]))
+          p_tag=Q^2*(nTag[r]-1)+Q*(2*(1-Q))^(nTag[r]-1)
+          p_ret[r,y]=ut[y]*p_tag*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
+          p_ret[r,n_mon+y]=unt[y]*p_tag*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
+          #p_ret[r,y]=ut[y]*(1-TL^nTag[r])*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
+          #p_ret[r,n_mon+y]=unt[y]*(1-TL^nTag[r])*prod(S[r,release_period[r]:(y-1)])*lambda[RewardLevel[r]]
           
         }  # close if else
         
       }  #close y loop
       
-      p_ret[r,2*n_mon+1]=1-sum(p_ret[r,])
+      p_ret[r,2*n_mon+1]=1-sum(p_ret[r,])#probability of not being captured
       nll[r]=-dmultinom(recaps[r,],prob=p_ret[r,],log=T)
       
     } #close r loop
@@ -319,7 +373,12 @@ for (i in seq_along(lambda_fixed)) {
     sum(nll)
   }  #close function
   
-  fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL=TL,nTag=tests_merged$Num.tagged, RewardLevel=tests_merged$RewardLevel,release_period=release_period,recaps=tests_merged[,-c(1:4)],
+  
+  #nll(theta,recaps=,TL_init,TL_chr,nTag,RewardLevel,release_period,f_index,m_index)
+  nll(theta,TL_init=TL_init,TL_chr=TL_chr,nTag=tests_merged$Num.tagged, RewardLevel=tests_merged$RewardLevel,
+      release_period=release_period,recaps=tests_merged[,-c(1:4)],m_index=cm_index,f_index=u_index)
+  
+  fit=optim(theta,fn=nll,method='BFGS',hessian=T,TL_init=TL_init,TL_chr=TL_chr,nTag=tests_merged$Num.tagged, RewardLevel=tests_merged$RewardLevel,release_period=release_period,recaps=tests_merged[,-c(1:4)],
             control = list(trace=1,maxit = 200),m_index=cm_index,f_index=u_index)#needed a few more iterations to "converge"
   fit_results[[paste0("lambda_", lambda_val)]] = list(
     fit=fit,
@@ -334,10 +393,15 @@ n_f=length(unique(f_index))
 
 all_estimates <- lapply(names(fit_results), function(name) {
   fit <- fit_results[[name]]$fit
+  names(fit$par)=names(theta)
   lambda_fixed <- fit_results[[name]]$lambda_fixed
   
   hessian_inv <- solve(fit$hessian)
   se <- sqrt(diag(hessian_inv))
+  
+  est_z <- exp(fit$par[substr(names(fit$par),1,2)=='ft'])*0.73 +
+    exp(fit$par[substr(names(fit$par),1,2)=='fn']) +
+    exp(fit$par[substr(names(fit$par),1,1)=='m'])
   
   n_m <- length(unique(m_index))
   n_f <- length(unique(f_index))
@@ -345,21 +409,24 @@ all_estimates <- lapply(names(fit_results), function(name) {
   list(
     lambda_fixed = lambda_fixed,
     
-    est_m = exp(fit$par[1:n_m]),
-    l95ci_m = exp(fit$par[1:n_m] - 1.96 * se[1:n_m]),
-    u95ci_m = exp(fit$par[1:n_m] + 1.96 * se[1:n_m]),
+    est_m = exp(fit$par[substr(names(fit$par),1,1)=='m']),
+    l95ci_m = exp(fit$par[substr(names(fit$par),1,1)=='m'] - 1.96 * se[substr(names(fit$par),1,1)=='m']),
+    u95ci_m = exp(fit$par[substr(names(fit$par),1,1)=='m'] + 1.96 * se[substr(names(fit$par),1,1)=='m']),
     
-    est_ft = exp(fit$par[(n_m+3):(n_m+2+n_f)]),
-    l95ci_ft = exp(fit$par[(n_m+3):(n_m+2+n_f)] - 1.96 * se[(n_m+3):(n_m+2+n_f)]),
-    u95ci_ft = exp(fit$par[(n_m+3):(n_m+2+n_f)] + 1.96 * se[(n_m+3):(n_m+2+n_f)]),
+    est_ft = exp(fit$par[substr(names(fit$par),1,2)=='ft']),
+    l95ci_ft = exp(fit$par[substr(names(fit$par),1,2)=='ft'] - 1.96 * se[substr(names(fit$par),1,2)=='ft']),
+    u95ci_ft = exp(fit$par[substr(names(fit$par),1,2)=='ft'] + 1.96 * se[substr(names(fit$par),1,2)=='ft']),
     
-    est_fnt = exp(fit$par[(n_m+3+n_f):(n_m+2+2*n_f)]),
-    l95ci_fnt = exp(fit$par[(n_m+3+n_f):(n_m+2+2*n_f)] - 1.96 * se[(n_m+3+n_f):(n_m+2+2*n_f)]),
-    u95ci_fnt = exp(fit$par[(n_m+3+n_f):(n_m+2+2*n_f)] + 1.96 * se[(n_m+3+n_f):(n_m+2+2*n_f)]),
+    est_fnt = exp(fit$par[substr(names(fit$par),1,2)=='fn']),
+    l95ci_fnt = exp(fit$par[substr(names(fit$par),1,2)=='fn'] - 1.96 * se[substr(names(fit$par),1,2)=='fn']),
+    u95ci_fnt = exp(fit$par[substr(names(fit$par),1,2)=='fn'] + 1.96 * se[substr(names(fit$par),1,2)=='fn']),
     
-    est_lam = plogis(fit$par[(n_m+1):(n_m+2)]),
-    l95ci_lam=plogis(fit$par[(n_m+1):(n_m+2)] - 1.96 * se[(n_m+1):(n_m+2)]),
-    u95ci_lam=plogis(fit$par[(n_m+1):(n_m+2)] + 1.96 * se[(n_m+1):(n_m+2)])
+    est_lam = plogis(fit$par[substr(names(fit$par),1,2)=='la']),
+    l95ci_lam=plogis(fit$par[substr(names(fit$par),1,2)=='la'] - 1.96 * se[substr(names(fit$par),1,2)=='la']),
+    u95ci_lam=plogis(fit$par[substr(names(fit$par),1,2)=='la'] + 1.96 * se[substr(names(fit$par),1,2)=='la']),
+    
+    est_z= est_z,
+    est_ut=(exp(fit$par[substr(names(fit$par),1,2)=='ft'])*0.73)/est_z*(1-exp(-est_z))
   )
 }
 )
@@ -370,12 +437,25 @@ n_f=length(unique(f_index))
 
 months=c('J','F','M','A','M','J','J','A','S','O','N','D')
 
-#### ft, lambda = 0.70, pooled ####
+
+
+#CL_Contribution = subset(tag_return, If.released.it.was == "c")
+#CL_T_Prop = nrow(subset(CL_Contribution, Access.to.the.lake == "Coosa Landing")) / 
+#  nrow(subset(CL_Contribution, !(Access.to.the.lake %in% c("Riverside Landing","Lincoln Landing"))))
+#0.7313433 of tourney weighed in fish on Neely Henry were released at CL
+
+
+
+#### ft, lambda = 0.80, pooled ####
 windows()
-par(mar = c(5, 6, 4, 2))
+
+png("F T Vertical Stack.png", widt=2000,height=2500, res=300)
+layout(matrix(1:3, nrow=3, byrow=TRUE), heights = c(1,1,1))
+par(mar = c(2, 2, 2, 2), oma = c(4,4,2,0),xpd=NA)
+
 plot(all_estimates[[1]]$est_ft[f_index][1:12],type='l', lwd = 3, 
-     ylim=c(0,0.3),xaxt='n',xlab='Month',cex.lab = 1.5, cex.axis = 1.5,
-     ylab=expression('Tournament Weigh-in Rate (month  '^-1*')'))
+     ylim=c(0,0.2),xaxt='n',xlab='',cex.lab = 1.5, cex.axis = 1.5,
+     ylab='')
 axis(1,at=1:12,labels=months,cex.axis=1.5)
 lines(all_estimates[[1]]$u95ci_ft[f_index][1:12],lty=3,lwd=3)
 lines(all_estimates[[1]]$l95ci_ft[f_index][1:12],lty=3,lwd=3)
@@ -388,18 +468,18 @@ legend("topright",
 )
 
 legend("topleft",
-       legend = expression(lambda[300]==0.70),
+       legend = expression(lambda[300]==0.80),
        cex=1.5,
        adj = 0,
        bty="n",
        inset=0)
 
-#### ft, lambda = 0.85, pooled ####
-windows()
-par(mar = c(5, 6, 4, 2))
+#### ft, lambda = 0.90, pooled ####
+#windows()
+#par(mar = c(5, 6, 4, 2))
 plot(all_estimates[[2]]$est_ft[f_index][1:12],type='l', lwd = 3, 
-     ylim=c(0,0.3),xaxt='n',xlab='Month',cex.lab = 1.5, cex.axis = 1.5,
-     ylab=expression('Tournament Weigh-in Rate (month  '^-1*')'))
+     ylim=c(0,0.2),xaxt='n',xlab='',cex.lab = 1.5, cex.axis = 1.5,
+     ylab='')
 axis(1,at=1:12,labels=months,cex.axis=1.5)
 lines(all_estimates[[2]]$u95ci_ft[f_index][1:12],lty=3,lwd=3)
 lines(all_estimates[[2]]$l95ci_ft[f_index][1:12],lty=3,lwd=3)
@@ -412,21 +492,100 @@ legend("topright",
 )
 
 legend("topleft",
-       legend = expression(lambda[300]==0.85),
+       legend = expression(lambda[300]==0.90),
        cex=1.5,
        adj = 0,
        bty="n",
        inset=0)
 
 #### ft, lambda = 1, pooled ####
-windows()
-par(mar = c(5, 6, 4, 2))
+#windows()
+#par(mar = c(5, 6, 4, 2))
 plot(all_estimates[[3]]$est_ft[f_index][1:12],type='l', lwd = 3, 
-     ylim=c(0,0.3),xaxt='n',xlab='Month',cex.lab = 1.5, cex.axis = 1.5,
-     ylab=expression('Tournament Weigh-in Rate (month  '^-1*')'))
+     ylim=c(0,0.2),xaxt='n',xlab='',cex.lab = 1.5, cex.axis = 1.5,
+     ylab='')
 axis(1,at=1:12,labels=months,cex.axis=1.5)
 lines(all_estimates[[3]]$u95ci_ft[f_index][1:12],lty=3,lwd=3)
 lines(all_estimates[[3]]$l95ci_ft[f_index][1:12],lty=3,lwd=3)
+legend("topright",
+       legend = c("Estimate", "95% CI"),
+       lty = c(1,3),
+       lwd = c(3,3),
+       bty="n",
+       cex=1.5
+)
+
+legend("topleft",
+       legend = expression(lambda[300]==1.00),
+       cex=1.5,
+       adj = 0,
+       bty="n",
+       inset=0)
+
+mtext("Month", side =1, outer =TRUE, line=1.5, cex=1)
+mtext(expression('Tournament Weigh-in Rate (month  '^-1*')'), 
+      side = 2, outer=TRUE, line=1, cex = 1)
+
+dev.off()
+
+#### fnt, lambda = 0.80, pooled ####
+windows()
+#png("F NT Vertical Stack.png", widt=2000,height=2500, res=300)
+layout(matrix(1:3, nrow=3, byrow=TRUE), heights = c(1,1,1))
+par(mar = c(2, 2, 2, 2), oma = c(4,4,2,0),xpd=NA)
+
+plot(all_estimates[[1]]$est_fnt[f_index][1:12],type='l', lwd = 3, 
+     ylim=c(0,0.4),xaxt='n',xlab='',cex.lab = 1.5, cex.axis = 1.5,
+     ylab='')
+axis(1,at=1:12,labels=months,cex.axis=1.5)
+lines(all_estimates[[1]]$u95ci_fnt[f_index][1:12],lty=3,lwd=3)
+lines(all_estimates[[1]]$l95ci_fnt[f_index][1:12],lty=3,lwd=3)
+legend("topright",
+       legend = c("Estimate", "95% CI"),
+       lty = c(1,3),
+       lwd = c(3,3),
+       bty="n",
+       cex=1.5
+)
+
+legend("topleft",
+       legend = expression(lambda[300]==0.80),
+       cex=1.5,
+       adj = 0,
+       bty="n",
+       inset=0)
+
+#### fnt, lambda = 0.90, pooled ####
+
+plot(all_estimates[[2]]$est_fnt[f_index][1:12],type='l', lwd = 3, 
+     ylim=c(0,0.4),xaxt='n',xlab='',cex.lab = 1.5, cex.axis = 1.5,
+     ylab='')
+axis(1,at=1:12,labels=months,cex.axis=1.5)
+lines(all_estimates[[2]]$u95ci_fnt[f_index][1:12],lty=3,lwd=3)
+lines(all_estimates[[2]]$l95ci_fnt[f_index][1:12],lty=3,lwd=3)
+legend("topright",
+       legend = c("Estimate", "95% CI"),
+       lty = c(1,3),
+       lwd = c(3,3),
+       bty="n",
+       cex=1.5
+)
+
+legend("topleft",
+       legend = expression(lambda[300]==0.90),
+       cex=1.5,
+       adj = 0,
+       bty="n",
+       inset=0)
+
+#### fnt, lambda = 1, pooled ####
+
+plot(all_estimates[[3]]$est_fnt[f_index][1:12],type='l', lwd = 3, 
+     ylim=c(0,0.4),xaxt='n',xlab='',cex.lab = 1.5, cex.axis = 1.5,
+     ylab='')
+axis(1,at=1:12,labels=months,cex.axis=1.5)
+lines(all_estimates[[3]]$u95ci_fnt[f_index][1:12],lty=3,lwd=3)
+lines(all_estimates[[3]]$l95ci_fnt[f_index][1:12],lty=3,lwd=3)
 legend("topright",
        legend = c("Estimate", "95% CI"),
        lty = c(1,3),
@@ -441,6 +600,75 @@ legend("topleft",
        adj = 0,
        bty="n",
        inset=0)
+
+mtext("Month", side =1, outer =TRUE, line=1.5, cex=1)
+mtext(expression('Non-Weigh-in Rate (month  '^-1*')'), 
+      side = 2, outer=TRUE, line=1, cex = 1)
+
+dev.off()
+
+
+#### Instaneous Apparent M -1 Graph ####
+
+M_dat = data.frame(
+  est_m = c(all_estimates[[1]]$est_m, all_estimates[[2]]$est_m, all_estimates[[3]]$est_m),
+  u_ci_m = c(all_estimates[[1]]$u95ci_m, all_estimates[[2]]$u95ci_m, all_estimates[[3]]$u95ci_m),
+  l_ci_m = c(all_estimates[[1]]$l95ci_m, all_estimates[[2]]$l95ci_m, all_estimates[[3]]$l95ci_m),
+  fixed_lambda=c(0.8,0.9,1)
+)
+
+windows()
+
+#png("M Barplot.png", widt=2500,height=2000, res=300)
+par(mar = c(5, 3, 2, 2), oma = c(0, 4, 0, 0))  
+M_plot = barplot(M_dat$est_m, names.arg = M_dat$fixed_lambda,
+        ylim = c(0,1),
+        xaxt = 'n', yaxt = 'n')
+axis(1, at = M_plot, labels = M_dat$fixed_lambda, cex.axis = 1.5)
+axis(2, at = seq(0,1.5, by = 0.25), cex.axis = 1.5)
+
+mtext(expression('Apparent Mortality (month  '^-1*')'),
+      side = 2, line = 3, cex = 1.5)
+mtext(expression('Assumed $300 Tag Reporting Rate ('*lambda[300]*')'),
+      side = 1, line = 3, cex = 1.5)
+
+arrows(x0 = M_plot, y0 = M_dat$l_ci_m,
+       x1 = M_plot, y1 = M_dat$u_ci_m,
+       angle=90, code = 3, length = 0.1, lwd = 1)
+#dev.off()
+
+
+#### Lambda Barplot ####
+
+Lambda_dat = data.frame(
+  est_lambda = c(all_estimates[[1]]$est_lam, all_estimates[[2]]$est_lam, all_estimates[[3]]$est_lam),
+  u_ci_lam = c(all_estimates[[1]]$u95ci_lam, all_estimates[[2]]$u95ci_lam, all_estimates[[3]]$u95ci_lam),
+  l_ci_lam= c(all_estimates[[1]]$l95ci_lam, all_estimates[[2]]$l95ci_lam, all_estimates[[3]]$l95ci_lam),
+  RewardLevel=c(100,200,100,200,100,200),
+  fixed_lambda=c(0.8,0.8,0.9,0.9,1,1)
+)
+
+Lambda_mat = matrix(Lambda_dat$est_lambda,
+                    nrow=2, byrow=FALSE)
+windows()
+#png("Lambda Barplot.png", width=2500,height=2000, res=300)
+par(mar = c(5, 5, 2, 2), oma = c(0, 3, 0, 0))  
+lambda_plot = barplot(Lambda_mat, beside=TRUE,
+        names.arg = unique(Lambda_dat$fixed_lambda),
+        col = c("white", "darkgray"),
+        ylim = c(0,1),
+        xlab = expression("Assumed $300 Tag Reporting Rate ("*lambda[300]*")"),
+        ylab = "Estimated Reporting Rate",cex.lab=1.5,
+        cex.axis=1.5,
+        cex.names = 1.5)
+legend("topleft", legend=c("$100", "$200"),
+       fill=c("white","darkgray"),bty="n",title = "Reward Level",
+       cex=1.5,xpd=TRUE, inset = c(0.02,0))
+
+arrows(x0=lambda_plot, y0=Lambda_dat$l_ci_lam,
+       x1=lambda_plot, y1=Lambda_dat$u_ci_lam,
+       angle=90,code=3, length=0.1,lwd=1)
+#dev.off()
 
 #### OBJECTIVE 2 ####
 #For objective 2 we want to look at the behavior aspect of tournament dispersal. We will use telemetry data to do this
@@ -592,10 +820,45 @@ dat = CL_Fish %>%
   )
 
 Kaplan = survfit(Surv(time, event) ~ 1, data = dat)
+summary(Kaplan)
 
 windows()
+#png("Kaplan Dispersal.png", widt=2500,height=2000, res=300)
 ggsurvplot(Kaplan,fun="event", conf.int=TRUE,
-           surv.median.line="hv",ylim=c(0,1))
+           surv.median.line="hv",ylim=c(0,1),
+           ylab = "Probability of Dispersal",
+           xlab = "Weeks Since Release",
+           legend = "none")
+#dev.off()
+disp_summary <- summary(Kaplan)
+disp_df <- data.frame(
+  week = disp_summary$time,
+  n_risk = disp_summary$n.risk,
+  n_event = disp_summary$n.event,
+  cum_disp = 1 - disp_summary$surv,
+  lower_CI = 1 - disp_summary$upper,
+  upper_CI = 1 - disp_summary$lower
+)
+disp_df
+
+time_points <- seq(0, max(Kaplan$time), by = 4)  
+km_summary <- summary(Kaplan, times = time_points)
+
+# cumulative probability of dispersal at each time point
+cum_disp <- 1 - km_summary$surv  
+
+# monthly increments (probability of dispersing within that month)
+monthly_disp <- diff(cum_disp)
+
+disp_df <- data.frame(
+  month = 1:length(monthly_disp),
+  cum_disp = cum_disp[-1],       # cumulative by end of each month
+  monthly_disp = monthly_disp    # dispersal during that month
+)
+
+disp_df
+
+Disp_Probs = as.vector(c(disp_df[1,3],disp_df[2,3]))
 
 #### CUMULATIVE INCIDENCE (KAPLAN BUT MORE COMPLICATED) ####
 dat2 <- dat %>% mutate(
@@ -1023,8 +1286,9 @@ PrePost_plot = ggplot(filtered_labeled2, aes(x = Date, y = m_w, group = RewardTa
 
 
 #CONSTANTS
-n_yrs = 50
+n_yrs = 30
 n_period = n_yrs*12
+r_period = seq(4,n_period,12)
 
 N_tot = 1 
 
@@ -1035,85 +1299,313 @@ Initial_Lake = 1-(ReleaseZone_AREA/Lake_AREA) ####Maybe inform this based on tag
 InitialReleaseZone= N_tot-Initial_Lake ###Inform based on tagging data????
 
 disp_rate = 0.65 #assymptotes around here after 1 month (DISPERSAL ANALYSIS)
-Dnt = 0.05 #post release mortality (LITERATURE)#FIND CITATIONS FOR THIS
-Dt = 0.25 #Weigh-in release mortality (LITERATURE)#FIND CITATIONS FOR THIS
-Pharv = nrow(subset(tag_return,Kept.or.released == "K"))/nrow(tag_return) #Proportion of non-weigh-in captures that resulted in harvest (TAG RETURN DATA)
+Dnt = 0.1 #post release mortality (LITERATURE)#FIND CITATIONS FOR THIS
+Dt = 0.2 #Weigh-in release mortality (LITERATURE)#FIND CITATIONS FOR THIS
+Pharv = nrow(subset(tag_return,Kept.or.released == "K"))/nrow(subset(tag_return,If.released.it.was != "c")) #Proportion of non-weigh-in captures that resulted in harvest (TAG RETURN DATA)
 
 sim_results = list()
 
 for(i in seq_along(all_estimates)){
   
-parameters = all_estimates[[i]]
+  parameters = all_estimates[[i]]
   
-Apparent_M = parameters$est_m / 12 #mortality (ESIMATION MODEL)
-ft = parameters$est_ft
-fnt = parameters$est_fnt 
-
-
-load_rate_index = c(1,1,2,3,4,5,6,7,8,9,10,1)
-load_rate_index = rep(load_rate_index,n_yrs)
-
-load_rate = as.vector(ft[load_rate_index])#tournament weigh in rate
-encounter_rate = as.vector(fnt[load_rate_index])
-
-Mort = Apparent_M + Pharv*encounter_rate+encounter_rate*(1-Pharv)*Dnt
-
-#SETTING UP WHAT WE ARE GOING TO TRACK
-NewImmig = numeric(length=n_period)
-NewEmig = numeric(length=n_period)
-Lake = numeric(length=n_period)
-
-ReleaseZonePop=numeric(length=n_period)
-InsiderPop = numeric(length=n_period)
-OutsidersInZone = numeric(length=n_period)
-TourneyInsiders=numeric(length=n_period)
-N = numeric(length=n_period)
-
-#InitialValues
-Lake[1] = Initial_Lake
-NewImmig[1] = load_rate[1]*Lake[1]
-NewEmig[1] = 0
-
-
-ReleaseZonePop[1] = InsiderPop[1]+OutsidersInZone[1]
-InsiderPop[1] = InitialReleaseZone
-OutsidersInZone[1] = 0
-TourneyInsiders[1] = InsiderPop[1]*load_rate[1]
-N[1] = InsiderPop[1]+Lake[1]
-
-for (t in 2:n_period){
+  Apparent_M = parameters$est_m / 12 #mortality (ESIMATION MODEL)
+  ft = parameters$est_ft
+  fnt = parameters$est_fnt 
+  ut = parameters$est_ut
   
-  Lake[t] = (Lake[t-1] - NewImmig[t-1])* exp(-Mort[t-1]) + NewEmig[t-1]*exp(-Mort[t-1])
-  Mort[t] = Apparent_M+Pharv*encounter_rate[t]+encounter_rate[t]*(1-Pharv)*Dnt
+  load_rate_index = c(1,1,2,3,4,5,6,7,8,9,10,1)#
+  load_rate_index = rep(load_rate_index,n_yrs)
   
-  NewImmig[t] = load_rate[t]*Lake[t]
-  NewEmig[t] = NewImmig[t-1]*exp(-Mort[t-1])*(1-Dt)*disp_rate
+  load_rate = as.vector(ut[load_rate_index])#tournament weigh in rate
+  encounter_rate = as.vector(fnt[load_rate_index])
   
-  OutsidersInZone[t] = (OutsidersInZone[t-1]-NewEmig[t-1])*exp(-Mort[t-1])+NewImmig[t-1]*exp(-Mort[t-1])*(1-Dt)
-  TourneyInsiders[t] = InsiderPop[t] * load_rate[t]
+  Mort = Apparent_M + Pharv*encounter_rate+encounter_rate*(1-Pharv)*Dnt
   
-  InsiderPop[t] = (InsiderPop[t-1]-TourneyInsiders[t-1])*exp(-Mort[t-1])+TourneyInsiders[t-1]*exp(-Mort[t-1])*(1-Dt)
-  ReleaseZonePop[t] = InsiderPop[t] + OutsidersInZone[t] 
+  #SETTING UP WHAT WE ARE GOING TO TRACK
+  NewImmig = numeric(length=n_period)
+  NewEmig = numeric(length=n_period)
+  Lake = numeric(length=n_period)
   
+  ReleaseZonePop=numeric(length=n_period)
+  InsiderPop = numeric(length=n_period)
+  OutsidersInZone = numeric(length=n_period)
+  TourneyInsiders=numeric(length=n_period)
+  N = numeric(length=n_period)
+  Prop_Zone=numeric(length=n_period)
   
-  N[t] = Lake[t] + ReleaseZonePop[t]
-  Prop_Zone[t] = ReleaseZonePop[t]/N[t]
+  #InitialValues
+  Lake[1] = Initial_Lake
+  NewImmig[1] = load_rate[1]*Lake[1]
+  NewEmig[1] = 0
+  
+  InsiderPop[1] = InitialReleaseZone
+  OutsidersInZone[1] = 0
+  ReleaseZonePop[1] = InsiderPop[1]+OutsidersInZone[1]
+  TourneyInsiders[1] = InsiderPop[1]*load_rate[1]
+  N[1] = InsiderPop[1]+Lake[1]
+  
+  for (t in 2:n_period){
+    
+    Lake[t] = ifelse(t %in% r_period,(Lake[t-1] - NewImmig[t-1])* exp(-Mort[t-1]) + NewEmig[t-1]*exp(-Mort[t-1]) + R*Initial_Lake,
+                     (Lake[t-1] - NewImmig[t-1]) * exp(-Mort[t-1]) + NewEmig[t-1]*exp(-Mort[t-1]))
+    
+    NewImmig[t] = load_rate[t]*Lake[t]
+    NewEmig[t] = NewImmig[t-1]*exp(-Mort[t-1])*(1-Dt)*disp_rate
+    
+    OutsidersInZone[t] = (OutsidersInZone[t-1]-NewEmig[t-1])*exp(-Mort[t-1])+NewImmig[t-1]*exp(-Mort[t-1])*(1-Dt)
+    TourneyInsiders[t] = InsiderPop[t] * load_rate[t]
+    
+    InsiderPop[t] = ifelse(t %in% r_period,(InsiderPop[t-1]-TourneyInsiders[t-1])*exp(-Mort[t-1])+TourneyInsiders[t-1]*exp(-Mort[t-1])*(1-Dt)+R*InitialReleaseZone,
+                           (InsiderPop[t-1]-TourneyInsiders[t-1])*exp(-Mort[t-1])+TourneyInsiders[t-1]*exp(-Mort[t-1])*(1-Dt))
+    
+    ReleaseZonePop[t] = InsiderPop[t] + OutsidersInZone[t] 
+    
+    
+    N[t] = Lake[t] + ReleaseZonePop[t]
+    Prop_Zone[t] = ReleaseZonePop[t]/N[t]
+    
+    if(t %in% r_period){
+      deficit = N_tot - (Lake[t] + ReleaseZonePop[t])
+      R_lake = deficit * Initial_Lake
+      R_Zone = deficit * InitialReleaseZone
+      
+      Lake[t] = Lake[t] + R_lake
+      InsiderPop[t] = InsiderPop[t] + R_Zone
+      
+      ReleaseZonePop[t] = InsiderPop[t] + OutsidersInZone[t]
+      N[t] = Lake[t] + ReleaseZonePop[t]
+      Prop_Zone[t] = ReleaseZonePop[t]/N[t]
+    }
+    
+  }
+  
+  sim_results[[paste0("lambda_", parameters$lambda_fixed)]] <- list(
+    
+    Lake = Lake,
+    Mort = Mort,
+    NewImmig = NewImmig,
+    NewEmig = NewEmig,
+    OutsidersInZone = OutsidersInZone,
+    TourneyInsiders = TourneyInsiders,
+    InsiderPop = InsiderPop,
+    ReleaseZonePop = ReleaseZonePop,
+    N = N,
+    Prop_Zone = Prop_Zone
+    
+  )
   
 }
 
-sim_results[[paste0("lambda_", parameters$lambda_fixed)]] <- list(
-  
-  Lake = Lake,
-  Mort = Mort,
-  NewImmig = NewImmig,
-  NewEmig = NewEmig,
-  OutsidersInZone = OutsidersInZone,
-  TourneyInsiders = TourneyInsiders,
-  InsiderPop = InsiderPop,
-  ReleaseZonePop = ReleaseZonePop,
-  N = N,
-  Prop_Zone = Prop_Zone
-  
-)
+plot(sim_results$lambda_0.7$N, type="l")
+plot(sim_results$lambda_0.85$N, type="l")
+plot(sim_results$lambda_1$N, type="l")
 
+windows()
+plot(sim_results$lambda_0.7$Prop_Zone, type="l",col="blue")
+lines(sim_results$lambda_0.85$Prop_Zone,col="red")
+lines(sim_results$lambda_1$Prop_Zone,col="black")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### TRYING TO REVAMP OBJ 3 ####
+#### OBJECTIVE 3 ####
+#Now we want to pair up the results from objective 1 and objective 2 into our simulation model which will help 
+#us understand the long-term spatial implications of the weigh-in rates that are occurring on Neely Henry
+
+
+#CONSTANTS
+n_yrs = 40
+n_period = n_yrs*12
+r_period = seq(4,n_period,12)
+
+N_tot = 1 
+
+ReleaseZone_AREA = as.numeric(st_area(ReleaseZone))
+Lake_AREA = as.numeric(st_area(NeelySHP))
+
+Initial_Lake = 1-(ReleaseZone_AREA/Lake_AREA) ####Maybe inform this based on tagging data????
+InitialReleaseZone= N_tot-Initial_Lake ###Inform based on tagging data????
+
+disp_rate = Disp_Probs #assymptotes around here after 1 month (DISPERSAL ANALYSIS)
+Dnt = 0.1 #post release mortality (LITERATURE)#FIND CITATIONS FOR THIS
+Dt = 0.2 #Weigh-in release mortality (LITERATURE)#FIND CITATIONS FOR THIS
+Pharv = nrow(subset(tag_return,Kept.or.released == "K"))/nrow(subset(tag_return,If.released.it.was != "c")) #Proportion of non-weigh-in captures that resulted in harvest (TAG RETURN DATA)
+
+sim_results = list()
+
+for(i in seq_along(all_estimates)){
+  
+  parameters = all_estimates[[i]]
+  
+  Apparent_M = parameters$est_m / 12 #mortality (ESIMATION MODEL)
+  ft = parameters$est_ft
+  fnt = parameters$est_fnt 
+  ut = parameters$est_ut
+  ut = ut*CL_T_Prop
+  
+  load_rate_index = c(1,1,2,3,4,5,6,7,8,9,10,1)#
+  load_rate_index = rep(load_rate_index,n_yrs)
+  
+  load_rate = as.vector(ut[load_rate_index])#tournament weigh in rate
+  encounter_rate = as.vector(fnt[load_rate_index])
+  
+  Mort = Apparent_M + Pharv*encounter_rate+encounter_rate*(1-Pharv)*Dnt
+  
+  #SETTING UP WHAT WE ARE GOING TO TRACK
+  NewImmig = numeric(length=n_period)
+  NewEmig = numeric(length=n_period)
+  Lake = numeric(length=n_period)
+  
+  ReleaseZonePop=numeric(length=n_period)
+  InsiderPop = numeric(length=n_period)
+  OutsidersInZone = numeric(length=n_period)
+  TourneyInsiders=numeric(length=n_period)
+  N = numeric(length=n_period)
+  Prop_Zone=numeric(length=n_period)
+  Undispersed=numeric(length=n_period)
+  Month1Emig=numeric(length=n_period)
+  Month2Emig=numeric(length=n_period)
+  
+  #InitialValues
+  Lake[1] = Initial_Lake
+  NewImmig[1] = load_rate[1]*Lake[1]
+  NewEmig[1] = 0
+  
+  InsiderPop[1] = InitialReleaseZone
+  OutsidersInZone[1] = 0
+  ReleaseZonePop[1] = InsiderPop[1]+OutsidersInZone[1]
+  TourneyInsiders[1] = InsiderPop[1]*load_rate[1]
+  N[1] = InsiderPop[1]+Lake[1]
+
+  for (t in 2:n_period){
+    
+    Lake[t] = (Lake[t-1] - NewImmig[t-1])* exp(-Mort[t-1]) + NewEmig[t-1]*exp(-Mort[t-1])
+    
+    NewImmig[t] = load_rate[t]*Lake[t]#Fish From Lake being added to Zone
+    
+    #Accounting for fish emigrating in either month 1 post release 
+    Month1Emig[t] = NewImmig[t-1]*exp(-Mort[t-1])*(1-Dt)*Disp_Probs[1]#Fish that disperse in the first month in the zone
+    Undispersed[t] = NewImmig[t-1]*exp(-Mort[t-1])*(1-Dt)*(1 - Disp_Probs[1])#Fish that remain after month 1
+    Month2Emig[t] = Undispersed[t-1]*exp(-Mort[t-1])*Disp_Probs[2]#Fish that disperse in month 2
+    
+    NewEmig[t] = Month1Emig[t] + Month2Emig[t]
+    
+    OutsidersInZone[t] = (OutsidersInZone[t-1]-NewEmig[t-1])*exp(-Mort[t-1])+NewImmig[t-1]*exp(-Mort[t-1])*(1-Dt)#Fish that started in lake that are now in zone
+    TourneyInsiders[t] = InsiderPop[t] * load_rate[t]#Fish that started in the zone that are caught in tournaments
+    
+    InsiderPop[t] = (InsiderPop[t-1]-TourneyInsiders[t-1])*exp(-Mort[t-1])+TourneyInsiders[t-1]*exp(-Mort[t-1])*(1-Dt)#Tracking the population of fish that start and stay in zone forever
+    
+    ReleaseZonePop[t] = InsiderPop[t] + OutsidersInZone[t]#Total population in zone including fish moved there and fish that start there
+    
+    
+    N[t] = Lake[t] + ReleaseZonePop[t]#Total population of the entire waterbody
+    Prop_Zone[t] = ReleaseZonePop[t]/N[t]#Proportion of the population inside the zone at [t]
+    
+    #Adding recruits to the population
+    if(t %in% r_period){
+      deficit = N_tot - (Lake[t] + ReleaseZonePop[t])
+      R_lake = deficit * Initial_Lake
+      R_Zone = deficit * InitialReleaseZone
+      
+      Lake[t] = Lake[t] + R_lake
+      InsiderPop[t] = InsiderPop[t] + R_Zone
+      
+      ReleaseZonePop[t] = InsiderPop[t] + OutsidersInZone[t]
+      N[t] = Lake[t] + ReleaseZonePop[t]
+      Prop_Zone[t] = ReleaseZonePop[t]/N[t]
+    }
+    
+  }
+  
+  sim_results[[paste0("lambda_", parameters$lambda_fixed)]] <- list(
+    
+    Lake = Lake,
+    Mort = Mort,
+    NewImmig = NewImmig,
+    NewEmig = NewEmig,
+    OutsidersInZone = OutsidersInZone,
+    TourneyInsiders = TourneyInsiders,
+    InsiderPop = InsiderPop,
+    ReleaseZonePop = ReleaseZonePop,
+    N = N,
+    Prop_Zone = Prop_Zone
+    
+  )
+  
 }
+
+plot(sim_results$lambda_0.7$N, type="l")
+plot(sim_results$lambda_0.85$N, type="l")
+plot(sim_results$lambda_1$N, type="l")
+
+plot(sim_results$lambda_0.7$Prop_Zone, type="l",col="blue")
+lines(sim_results$lambda_0.85$Prop_Zone,col="red")
+lines(sim_results$lambda_1$Prop_Zone,col="black")
+
+
+
+plot(sim_results$lambda_0.85$Prop_Zone, type="l")
+plot(sim_results$lambda_1$Prop_Zone, type="l")
+
+
+
+plot(sim_results$lambda_0.7$Prop_Zone[325:348],type="l",ylim=c(0,0.6),col="blue")
+lines(sim_results$lambda_0.85$Prop_Zone[325:348],type="l",col="red")
+lines(sim_results$lambda_1$Prop_Zone[325:348],type="l",col="black")
+
+
+
+
+
+
+#### TABLES ####
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
